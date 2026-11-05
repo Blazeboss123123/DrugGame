@@ -18,6 +18,8 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: 
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
+const escapeHtml = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
 export function effectChips(effects: string[]): string {
   return effects.map((e) => `<span class="chip" style="--c:${EFFECTS[e].color}">${EFFECTS[e].name}</span>`).join('');
 }
@@ -659,76 +661,162 @@ export class Panels {
 
   openMultiplayer(onDone: () => void) {
     const net = this.svc.net;
-    const { overlay, body } = this.shell('Multiplayer', 'Co-op: shared streets, your own business');
-    const field = (id: string, label: string, value: string) => {
-      const row = el('div', 'setting');
-      const lab = el('label', undefined, label);
-      lab.htmlFor = id;
-      const input = el('input');
-      input.id = id;
-      input.value = value;
-      input.className = 'text-in';
-      input.addEventListener('keydown', (e) => e.stopPropagation());
-      row.append(lab, input);
-      body.appendChild(row);
-      return input;
-    };
+    const { overlay, body } = this.shell('Multiplayer', 'Join a world that is running right now, or host your own', true);
     const saved = (() => {
       try {
-        return JSON.parse(localStorage.getItem('ue.mp') || '{}') as { name?: string; room?: string; url?: string; outfit?: string };
+        return JSON.parse(localStorage.getItem('ue.mp') || '{}') as { name?: string; room?: string; url?: string; outfit?: string; world?: string; public?: boolean };
       } catch {
         return {};
       }
     })();
-    const name = field('mp-name', 'Your name', saved.name ?? `Player${Math.floor(Math.random() * 90 + 10)}`);
-    const room = field('mp-room', 'Room code (share it with friends)', saved.room ?? Math.random().toString(36).slice(2, 6).toUpperCase());
-    const url = field('mp-url', 'Server', net.defaultUrl());
+    const remember = (extra: Record<string, unknown>) => {
+      try {
+        localStorage.setItem('ue.mp', JSON.stringify({ ...saved, name: name.value, url: url.value, outfit: sel.value, ...extra }));
+      } catch {
+        /* ignore */
+      }
+    };
+    const field = (parent: HTMLElement, id: string, label: string, value: string, max = 20) => {
+      const row = el('div', 'setting');
+      const lab = el('label', undefined, label);
+      lab.htmlFor = id;
+      const input = el('input') as HTMLInputElement;
+      input.id = id;
+      input.value = value;
+      input.maxLength = max;
+      input.className = 'text-in';
+      input.addEventListener('keydown', (e) => e.stopPropagation());
+      row.append(lab, input);
+      parent.appendChild(row);
+      return input;
+    };
+
+    // You: name and character.
+    const me = el('div', 'mp-me');
+    const name = field(me, 'mp-name', 'Your name', saved.name ?? `Player${Math.floor(Math.random() * 90 + 10)}`);
     const outfitRow = el('div', 'setting');
     outfitRow.appendChild(el('label', undefined, 'Character'));
-    const sel = el('select');
-    sel.id = 'mp-outfit';
+    const sel = el('select') as HTMLSelectElement;
     for (const o of ['Casual_Hoodie', 'Casual_2', 'Beach', 'Farmer', 'Punk', 'Suit', 'Worker', 'Adventurer']) {
-      const op = el('option', undefined, o.replace('_', ' '));
+      const op = el('option', undefined, o.replace('_', ' ')) as HTMLOptionElement;
       op.value = o;
       sel.appendChild(op);
     }
     sel.value = saved.outfit ?? 'Casual_Hoodie';
     outfitRow.appendChild(sel);
-    body.appendChild(outfitRow);
+    me.appendChild(outfitRow);
+
     const out = el('p', 'result');
-    const row = el('div', 'btn-row');
-    const go = el('button', 'btn primary', net.online ? 'Reconnect' : 'Connect');
-    go.onclick = async () => {
-      go.disabled = true;
+    const join = async (code: string, opts: { world?: string; public?: boolean } = {}) => {
       out.className = 'result';
-      out.textContent = 'Connecting…';
-      try {
-        localStorage.setItem('ue.mp', JSON.stringify({ name: name.value, room: room.value, url: url.value, outfit: sel.value }));
-      } catch {
-        /* ignore */
-      }
-      const err = await net.connect(url.value.trim(), room.value, name.value, sel.value as import('../npc/Characters').Outfit);
-      go.disabled = false;
+      out.textContent = `Connecting to ${opts.world ?? code}…`;
+      remember({ room: code, world: opts.world ?? saved.world, public: opts.public ?? saved.public });
+      const err = await net.connect(url.value.trim(), code, name.value, sel.value as import('../npc/Characters').Outfit, opts);
       if (err) {
         out.className = 'result bad';
-        out.textContent = /claude\.ai|artifact/.test(location.host) || location.protocol === 'about:' ? `${err} Multiplayer can't connect from this preview page. Host the game with the included server (see README) and open it from there.` : err;
+        out.textContent = /claude\.ai|artifact/.test(location.host) || location.protocol === 'about:' ? `${err} Multiplayer needs the game server: open the game from your Render site.` : err;
         return;
       }
       out.className = 'result good';
-      out.textContent = `Connected to room ${net.room}.`;
+      out.textContent = `Joined ${net.world}.`;
       setTimeout(onDone, 600);
     };
-    row.appendChild(go);
+
+    // Tabs: browse running worlds, host your own, join by code.
+    const tabs = el('div', 'mp-tabs');
+    const pane = el('div', 'mp-pane');
+    const tab = (id: string, label: string) => {
+      const b = el('button', 'mp-tab', label);
+      b.dataset.tab = id;
+      b.onclick = () => show(id);
+      tabs.appendChild(b);
+    };
+    tab('browse', 'Browse worlds');
+    tab('host', 'Host a world');
+    tab('code', 'Join with a code');
+    let refresh = 0;
+    const show = (id: string) => {
+      clearInterval(refresh);
+      tabs.querySelectorAll<HTMLElement>('.mp-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === id));
+      pane.innerHTML = '';
+      if (id === 'browse') {
+        const list = el('div', 'mp-list', '<p class="muted">Looking for worlds…</p>');
+        const head = el('div', 'mp-browse-head');
+        const count = el('span', 'muted');
+        const again = el('button', 'btn small', 'Refresh');
+        head.append(count, again);
+        pane.append(head, list);
+        const load = async () => {
+          const r = await net.listRooms(url.value.trim());
+          if (!list.isConnected) return;
+          if ('error' in r) {
+            count.textContent = '';
+            list.innerHTML = `<p class="muted">${r.error} ${/claude\.ai|artifact/.test(location.host) ? 'This preview page can\u2019t go online: open the game from your Render site.' : 'Check the server address under Advanced.'}</p>`;
+            return;
+          }
+          count.textContent = `${r.rooms.length} public world${r.rooms.length === 1 ? '' : 's'} · ${r.online} player${r.online === 1 ? '' : 's'} online`;
+          list.innerHTML = '';
+          if (!r.rooms.length) list.innerHTML = '<p class="muted">No public worlds running right now. Host one and your friends will see it here.</p>';
+          for (const w of r.rooms) {
+            const h = Math.floor(w.minutes / 60);
+            const mm = String(Math.floor(w.minutes % 60)).padStart(2, '0');
+            const mine = net.online && net.room === w.code;
+            const row = el(
+              'div',
+              'mp-world',
+              `<div class="mp-world-main"><strong>${escapeHtml(w.name)}</strong><span class="muted small">Hosted by ${escapeHtml(w.host)} · Day ${w.day}, ${String(h).padStart(2, '0')}:${mm} · code ${w.code}</span><span class="mp-names">${w.names.map((n) => `<i>${escapeHtml(n)}</i>`).join('')}</span></div><div class="mp-world-side"><span class="mp-count${w.players >= w.max ? ' full' : ''}">${w.players}/${w.max}</span></div>`,
+            );
+            const b = el('button', `btn ${mine ? '' : 'primary'}`, mine ? 'You\u2019re here' : w.players >= w.max ? 'Full' : 'Join') as HTMLButtonElement;
+            b.disabled = mine || w.players >= w.max;
+            b.onclick = () => void join(w.code, { world: w.name });
+            row.querySelector('.mp-world-side')!.appendChild(b);
+            list.appendChild(row);
+          }
+        };
+        again.onclick = () => void load();
+        void load();
+        refresh = window.setInterval(() => void load(), 4000);
+      } else if (id === 'host') {
+        const world = field(pane, 'mp-world', 'World name', saved.world ?? `${name.value}'s world`, 32);
+        const pubRow = el('label', 'mp-check');
+        const pub = el('input') as HTMLInputElement;
+        pub.type = 'checkbox';
+        pub.checked = saved.public !== false;
+        pubRow.append(pub, el('span', undefined, 'List it publicly so anyone can find and join it'));
+        pane.appendChild(pubRow);
+        const code = Math.random().toString(36).slice(2, 6).toUpperCase();
+        pane.appendChild(el('p', 'muted', `Your friends can also join with the code <strong>${code}</strong>. Everyone plays in your world: your equipment, plants and storage. Each player keeps their own cash and backpack.`));
+        const go = el('button', 'btn primary', 'Start hosting') as HTMLButtonElement;
+        go.onclick = () => void join(code, { world: world.value.trim() || `${name.value}'s world`, public: pub.checked });
+        pane.appendChild(go);
+      } else {
+        const code = field(pane, 'mp-room', 'World code', saved.room ?? '', 12);
+        code.style.textTransform = 'uppercase';
+        const go = el('button', 'btn primary', 'Join') as HTMLButtonElement;
+        go.onclick = () => code.value.trim() && void join(code.value.trim().toUpperCase());
+        code.addEventListener('keydown', (e) => e.key === 'Enter' && go.click());
+        pane.append(go, el('p', 'muted', 'Private worlds don\u2019t show in the browser: ask the host for their code. If nobody is using that code yet, you start a new world with it.'));
+      }
+    };
+
+    // Advanced: server address (defaults to the server the game was loaded from).
+    const adv = el('details', 'mp-adv');
+    adv.appendChild(el('summary', undefined, 'Advanced'));
+    const url = field(adv, 'mp-url', 'Server', saved.url && !/localhost/.test(saved.url) ? saved.url : net.defaultUrl(), 120);
+
+    const status = el('div', 'mp-status');
     if (net.online) {
-      const leave = el('button', 'btn', 'Leave room');
+      status.innerHTML = `Connected to <strong>${escapeHtml(net.world)}</strong> (code ${net.room}) · ${net.players.size + 1} player(s)${net.isHost ? ' · you are the host' : ''}`;
+      const leave = el('button', 'btn small', 'Leave');
       leave.onclick = () => {
         net.disconnect();
-        out.textContent = 'Disconnected.';
+        status.textContent = 'Disconnected. Your own world is back.';
       };
-      row.appendChild(leave);
+      status.appendChild(leave);
     }
-    body.append(row, out, el('p', 'muted', 'Everyone in a room shares the streets, sees each other, can chat (T) and trade items and cash (look at a player and press E). The host\u2019s clock sets the time of day. Each player keeps their own business and save.'));
-    this.ui.present(overlay);
+    body.append(me, status, tabs, pane, out, adv);
+    show('browse');
+    this.ui.present(overlay, () => clearInterval(refresh));
   }
 
   // ------------------------------------------------------------------ cheats

@@ -409,7 +409,7 @@ export class Game implements UIHost {
       properties: this.properties.toJSON(),
       // While visiting someone else's world, your save keeps your own equipment.
       production: this.net.online ? this.net.sync.saveData() : this.production.save(),
-      customers: this.customers.toJSON(),
+      customers: this.net.online ? this.net.sync.saveCustomers() : this.customers.toJSON(),
       market: this.market.toJSON(),
       state: this.state.toJSON(),
       rivals: this.rivals.toJSON(),

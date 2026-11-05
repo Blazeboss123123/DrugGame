@@ -246,6 +246,7 @@ export class Customers {
     if (p.mode === 'use') return;
     p.pause = Math.max(p.pause, 6);
     p.facePlayer = 6;
+    this.peds.emit({ e: 'hold', i: p.index });
     if (p.police) {
       const late = this.svc.time.minutes > 1320 || this.svc.time.minutes < 300;
       this.svc.ui.toast(`${p.name}: "${late ? 'Curfew starts at eleven. Get yourself home.' : 'Keep your nose clean.'}"`, 'info');
@@ -598,11 +599,14 @@ export class Customers {
     // Customers slowly want more again (about a day to recover fully; faster if hooked).
     for (const prof of this.profiles.values()) prof.need = Math.min(1, prof.need + (minutes / 1300) * prof.craving);
     if (this.nextDealAt === 0) this.nextDealAt = now + 30;
-    if (this.customers.length && now >= this.nextDealAt) {
+    // In multiplayer only the host's game generates deal requests; everyone shares them.
+    const net = this.svc.net;
+    if (this.customers.length && now >= this.nextDealAt && (!net?.online || net.isHost)) {
       this.newDeal();
       this.nextDealAt = now + (this.rng.range(40, 100) / Math.min(3, 1 + this.customers.length * 0.15)) * (this.svc.upgrades?.has('burner') ? 0.6 : 1);
     }
     for (const d of this.deals) {
+      if (net?.online && !net.isHost) break; // the host's game expires deals for everyone
       if ((d.status === 'offered' || d.status === 'accepted') && now > d.expires) {
         const p = this.person(d.person);
         const prof = this.profiles.get(d.person)!;
@@ -614,6 +618,11 @@ export class Customers {
         d.status = 'failed';
       }
     }
+  }
+
+  /** Keeps new deal ids ahead of ones created on other players' games. */
+  bumpId(id: number) {
+    if (id >= this.nextId) this.nextId = id + 1;
   }
 
   forceDeal() {

@@ -162,7 +162,26 @@ export class VariantRegistry {
   }
 
   byKey(key: string | undefined): Variant | undefined {
-    return key ? this.variants.get(key) : undefined;
+    if (!key) return undefined;
+    const v = this.variants.get(key);
+    if (v) return v;
+    // A product made in someone else's game (traded or shared): the key says exactly what it is
+    // ("family:effect+effect@quality"), so learn it instead of treating it as nothing.
+    const m = /^([a-z]+):([a-z+]*)@([0-2])$/.exec(key);
+    if (!m || !(m[1] in FAMILIES)) return undefined;
+    const effects = m[2] ? m[2].split('+').filter((e) => e in EFFECTS) : [];
+    return this.get(m[1] as Family, effects, Number(m[3]) as Quality, 1).variant;
+  }
+
+  /** Learns products discovered by other players (multiplayer trades and shared stations). */
+  merge(list: Variant[] | undefined): number {
+    let n = 0;
+    for (const v of list ?? []) {
+      if (!v?.key || this.variants.has(v.key)) continue;
+      this.variants.set(v.key, { ...v });
+      n++;
+    }
+    return n;
   }
 
   rename(key: string, name: string) {

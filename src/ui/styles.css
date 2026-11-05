@@ -1171,3 +1171,31 @@ kbd,
 .pk-quick { width: auto !important; align-self: flex-start; }
 .shop-row > div.shop-icon { flex: 0 0 40px !important; width: 40px; height: 40px; overflow: hidden; }
 .shop-row > div.shop-icon img { width: 40px !important; height: 40px !important; display: block; object-fit: contain; }
+
+/* Multiplayer world browser */
+.mp-me { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mp-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; margin: 8px 0; border-radius: 8px; background: rgba(61,220,132,0.12); border: 1px solid rgba(61,220,132,0.4); font-size: 13px; }
+.mp-status:empty { display: none; }
+.mp-tabs { display: flex; gap: 6px; margin: 10px 0; }
+.mp-tab { padding: 8px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: inherit; cursor: pointer; font-weight: 600; }
+.mp-tab.on { background: #f2a23a; color: #111; border-color: #f2a23a; }
+.mp-pane { min-height: 220px; }
+.mp-browse-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.mp-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; padding-right: 4px; }
+.mp-world { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); }
+.mp-world:hover { border-color: rgba(242,162,58,0.6); }
+.mp-world-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.mp-world-main strong { font-size: 16px; }
+.mp-names { display: flex; flex-wrap: wrap; gap: 4px; }
+.mp-names i { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,0.08); }
+.mp-world-side { display: flex; align-items: center; gap: 10px; }
+.mp-count { font: 700 14px var(--mono); color: #3ddc84; }
+.mp-count.full { color: #e05a4a; }
+.mp-check { display: flex; gap: 8px; align-items: center; margin: 8px 0; cursor: pointer; }
+.mp-adv { margin-top: 10px; font-size: 13px; opacity: 0.8; }
+.mp-adv summary { cursor: pointer; }
+@media (max-width: 760px) { .mp-me { grid-template-columns: 1fr; } }
+
+/* Panels always sit above the title/pause screens. */
+.overlay { z-index: 20; }
+.fade { z-index: 40; }

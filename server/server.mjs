@@ -28,6 +28,26 @@ const TYPES = {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
+    if (url.pathname === '/rooms') {
+      // Public world browser: every open, public room with its host, players and in-game time.
+      const list = [...rooms.entries()]
+        .filter(([, r]) => r.public && r.players.size > 0)
+        .map(([code, r]) => ({
+          code,
+          name: r.name,
+          host: r.players.get(r.host)?.name ?? '',
+          players: r.players.size,
+          max: MAX_PER_ROOM,
+          names: [...r.players.values()].map((p) => p.name),
+          day: r.day,
+          minutes: r.minutes,
+          since: r.createdAt,
+        }))
+        .sort((a, b) => b.players - a.players || a.since - b.since);
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ rooms: list, online: [...rooms.values()].reduce((s, r) => s + r.players.size, 0) }));
+      return;
+    }
     if (url.pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, rooms: rooms.size, players: [...rooms.values()].reduce((s, r) => s + r.players.size, 0) }));
@@ -150,7 +170,7 @@ const rooms = new Map();
 function roomOf(code) {
   let r = rooms.get(code);
   if (!r) {
-    r = { players: new Map(), host: null };
+    r = { players: new Map(), host: null, name: '', public: true, createdAt: Date.now(), day: 1, minutes: 0 };
     rooms.set(code, r);
   }
   return r;
@@ -188,9 +208,15 @@ server.on('upgrade', (req, sock) => {
       case 'hello':
         me.name = clean(m.name, 20) || 'Player';
         me.outfit = clean(m.outfit, 24) || 'Casual_Hoodie';
+        // The first player in a room sets its name and whether it's listed publicly.
+        if (!room.players.size) {
+          room.name = clean(m.world, 32) || `${me.name}'s world`;
+          room.public = m.public !== false;
+          room.createdAt = Date.now();
+        }
         room.players.set(id, me);
         if (!room.host) room.host = id;
-        ws.send({ t: 'welcome', id, room: code, host: room.host, players: [...room.players.values()].filter((p) => p.id !== id).map((p) => ({ id: p.id, name: p.name, outfit: p.outfit })) });
+        ws.send({ t: 'welcome', id, room: code, world: room.name, public: room.public, host: room.host, players: [...room.players.values()].filter((p) => p.id !== id).map((p) => ({ id: p.id, name: p.name, outfit: p.outfit })) });
         broadcast(room, { t: 'join', id, name: me.name, outfit: me.outfit }, id);
         break;
       case 'st':
@@ -200,11 +226,23 @@ server.on('upgrade', (req, sock) => {
         broadcast(room, { t: 'chat', id, name: me.name, text: clean(m.text, 200) });
         break;
       case 'time':
-        if (room.host === id) broadcast(room, { t: 'time', day: m.day, minutes: m.minutes }, id);
+        if (room.host === id) {
+          room.day = Number(m.day) || 1;
+          room.minutes = Number(m.minutes) || 0;
+          broadcast(room, { t: 'time', day: m.day, minutes: m.minutes }, id);
+        }
         break;
       case 'w':
         // Shared-world change: everyone else applies it.
         broadcast(room, { t: 'w', ops: m.ops, reset: m.reset === true && room.host === id }, id);
+        break;
+      case 'pev':
+        // Someone talked to a person or a customer used product: everyone else sees it.
+        broadcast(room, { ...m, from: id }, id);
+        break;
+      case 'peds':
+        // Pedestrian positions come from the host only.
+        if (room.host === id) broadcast(room, { t: 'peds', p: m.p }, id);
         break;
       case 'wreq': {
         // A newcomer asks the host for the current world.

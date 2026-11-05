@@ -80,7 +80,16 @@ export class InteractionSystem {
     if (!active) return;
     if (input.wasPressed('KeyE')) {
       if (this.carrying) this.place();
-      else if (this.current) this.current.interact();
+      else if (this.current) {
+        // Never leave the game frozen if something goes wrong opening a panel.
+        try {
+          this.current.interact();
+        } catch (err) {
+          console.error(err);
+          this.svc.ui.toast(`Something went wrong there (${err instanceof Error ? err.message : String(err)}). Please tell the developer.`, 'warn');
+          if (this.svc.ui.modalOpen) this.svc.ui.dismiss();
+        }
+      }
     } else if (input.wasPressed('KeyF') && this.current?.secondaryPrompt?.()) this.current.secondary?.();
     else if (input.wasPressed('KeyG') && this.carrying) this.drop();
   }

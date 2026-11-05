@@ -74,6 +74,9 @@ export class Person implements Interactable {
   char: CharacterInstance | null = null;
   /** Index into NEIGHBOURHOODS for civilians who live somewhere (null for police and gangs). */
   hood: number | null = null;
+  /** Multiplayer guests: where the host says this person is. */
+  netX: number | undefined = undefined;
+  netZ = 0;
   /** Set each frame: this person is among the closest and should use a rigged model. */
   wantChar = false;
   constructor(
@@ -105,6 +108,13 @@ export class Person implements Interactable {
   }
 }
 
+export interface PedEvent {
+  e: 'hold' | 'use';
+  i: number;
+  color?: number;
+  effects?: string[];
+}
+
 export class Pedestrians {
   readonly nodes: Node[] = [];
   readonly people: Person[] = [];
@@ -116,6 +126,11 @@ export class Pedestrians {
   private turfNodes = new Map<GangId, Set<number>>();
   /** Street-corner nodes in each neighbourhood (index matches NEIGHBOURHOODS), and the police core. */
   readonly hoodNodes: Set<number>[] = [];
+  /** True for multiplayer guests: walking people follow the host's positions. */
+  remote = false;
+  /** Multiplayer: things players do to people (talking, a customer using product) are shared. */
+  onEvent?: (e: PedEvent) => void;
+  private applyingEvent = false;
   private coreNodes = new Set<number>();
   onCaught?: (by: Person) => void;
   onLost?: (by: Person) => void;
@@ -278,6 +293,7 @@ export class Pedestrians {
 
   /** The customer uses the product they just bought: hand to mouth, a puff, then the effects kick in. */
   consume(p: Person, color: number, effects: string[]) {
+    if (!this.applyingEvent) this.emit({ e: 'use', i: p.index, color, effects });
     p.afterUse = p.mode === 'wait' ? 'walk' : p.mode === 'use' ? p.afterUse : (p.mode as PersonMode);
     if (p.afterUse === 'chase') p.afterUse = 'walk';
     p.mode = 'use';
@@ -457,6 +473,23 @@ export class Pedestrians {
             continue;
           }
         }
+        if (this.remote && p.netX !== undefined) {
+          // Follow the host's copy of this person (snap if far, otherwise walk to it).
+          const fx = p.netX - p.x;
+          const fz = p.netZ - p.z;
+          const fd = Math.hypot(fx, fz);
+          if (fd > 20) {
+            p.x = p.netX;
+            p.z = p.netZ;
+          } else if (fd > 0.08) {
+            const step = Math.min(fd, Math.max(p.speed * speedMul, fd * 2) * dt);
+            p.x += (fx / fd) * step;
+            p.z += (fz / fd) * step;
+            moving = fd > 0.2;
+            this.turn(p, Math.atan2(fx, fz), dt);
+          }
+          p.y = this.surface(p.x, p.z);
+        } else {
         const target = this.nodes[p.to];
         const tx = target.x - p.x;
         const tz = target.z - p.z;
@@ -497,6 +530,7 @@ export class Pedestrians {
             this.turn(p, Math.atan2(tx, tz), dt);
           }
           p.y = this.surface(p.x, p.z);
+        }
         }
       }
       if (p.facePlayer > 0) {
@@ -584,6 +618,43 @@ export class Pedestrians {
     let d = want - p.yaw;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     p.yaw += d * Math.min(1, dt * 8);
+  }
+
+  emit(e: PedEvent) {
+    if (!this.applyingEvent) this.onEvent?.(e);
+  }
+
+  /** Another player talked to someone (they stop and face that player) or a customer used product. */
+  applyEvent(e: PedEvent, from?: { x: number; z: number }) {
+    const p = this.people[e.i];
+    if (!p) return;
+    this.applyingEvent = true;
+    try {
+      if (e.e === 'hold') {
+        p.pause = Math.max(p.pause, 6);
+        if (from) p.yaw = Math.atan2(from.x - p.x, from.z - p.z);
+      } else if (e.e === 'use') this.consume(p, e.color ?? 0xffffff, e.effects ?? []);
+    } finally {
+      this.applyingEvent = false;
+    }
+  }
+
+  /** Positions of everyone walking around (host side): [index, x, z] triples. */
+  snapshot(): number[] {
+    const out: number[] = [];
+    for (const p of this.people) if (p.mode === 'walk') out.push(p.index, Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10);
+    return out;
+  }
+
+  /** Guest side: take the host's positions as walking targets. */
+  applyRemote(list: number[] | undefined) {
+    if (!list) return;
+    for (let i = 0; i + 2 < list.length; i += 3) {
+      const p = this.people[list[i]];
+      if (!p) continue;
+      p.netX = list[i + 1];
+      p.netZ = list[i + 2];
+    }
   }
 
   /** Taser wires: a crackling line from the officer to you (or past you on a miss). */

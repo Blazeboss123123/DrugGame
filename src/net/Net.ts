@@ -21,6 +21,18 @@ export interface NetState {
   v?: { type: VehicleType; c: number; p: [number, number, number]; yaw: number; pitch: number; roll: number } | null;
 }
 
+export interface PublicRoom {
+  code: string;
+  name: string;
+  host: string;
+  players: number;
+  max: number;
+  names: string[];
+  day: number;
+  minutes: number;
+  since: number;
+}
+
 export interface ChatLine {
   name: string;
   text: string;
@@ -105,6 +117,9 @@ export class Net {
   id = '';
   host = '';
   room = '';
+  /** Name of the world (room) you're in, and whether it's listed publicly. */
+  world = '';
+  isPublic = true;
   name = 'Player';
   outfit: Outfit = 'Casual_Hoodie';
   status: 'offline' | 'connecting' | 'online' = 'offline';
@@ -116,6 +131,7 @@ export class Net {
   private escrow = new Map<number, { to: string; items: Stack[]; cash: number; at: number }>();
   private sendTimer = 0;
   private timeTimer = 0;
+  private pedTimer = 0;
   private nextTid = 1;
   private far: HumanoidRenderer;
   onChange?: () => void;
@@ -145,7 +161,19 @@ export class Net {
     return 'ws://localhost:8080/ws';
   }
 
-  connect(url: string, room: string, name: string, outfit: Outfit): Promise<string | null> {
+  /** Public worlds currently running on the server (for the world browser). */
+  async listRooms(url: string): Promise<{ rooms: PublicRoom[]; online: number } | { error: string }> {
+    try {
+      const http = url.replace(/^ws(s?):/, 'http$1:').replace(/\/ws\/?$/, '/rooms');
+      const res = await fetch(http, { cache: 'no-store' });
+      if (!res.ok) return { error: `Server answered ${res.status}.` };
+      return (await res.json()) as { rooms: PublicRoom[]; online: number };
+    } catch {
+      return { error: "Can't reach the multiplayer server." };
+    }
+  }
+
+  connect(url: string, room: string, name: string, outfit: Outfit, opts: { world?: string; public?: boolean } = {}): Promise<string | null> {
     this.disconnect();
     this.name = name.trim().slice(0, 20) || 'Player';
     this.outfit = outfit;
@@ -162,7 +190,7 @@ export class Net {
       try {
         const ws = new WebSocket(`${url}?room=${encodeURIComponent(this.room)}`);
         this.ws = ws;
-        ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, outfit: this.outfit }));
+        ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, outfit: this.outfit, world: opts.world, public: opts.public }));
         ws.onmessage = (e) => {
           let m: Record<string, unknown>;
           try {
@@ -214,6 +242,10 @@ export class Net {
     for (const p of this.players.values()) p.dispose(this.pool);
     this.players.clear();
     this.sync.stop();
+    if (this.svc.customers?.peds) {
+      this.svc.customers.peds.remote = false;
+      this.svc.customers.peds.onEvent = undefined;
+    }
     this.ws = null;
     this.status = 'offline';
     this.onChange?.();
@@ -240,10 +272,12 @@ export class Net {
       case 'welcome': {
         this.id = String(m.id);
         this.host = String(m.host);
+        this.world = String(m.world ?? this.room);
+        this.isPublic = m.public !== false;
         this.status = 'online';
         for (const p of m.players as { id: string; name: string; outfit: string }[]) this.add(p.id, p.name, p.outfit);
         this.sync.start(this.isHost);
-        this.system(`Joined room ${m.room}. ${this.players.size ? `${this.players.size} other player(s) here.` : 'Share the room code so friends can join.'}${this.isHost ? ' You are the host: your clock sets day and night.' : ''}`);
+        this.system(`Joined ${this.world} (code ${m.room}). ${this.players.size ? `${this.players.size} other player(s) here.` : this.isPublic ? 'It is listed in the world browser, or share the code.' : 'Private world: share the code so friends can join.'}${this.isHost ? ' You are the host: your clock sets day and night.' : ''}`);
         break;
       }
       case 'join':
@@ -269,6 +303,14 @@ export class Net {
         break;
       case 'wreq':
         if (this.isHost) this.send({ t: 'wsnap', to: m.from, ops: this.sync.snapshot() });
+        break;
+      case 'pev': {
+        const from = this.players.get(String(m.from));
+        this.svc.customers.peds?.applyEvent(m as unknown as import('../npc/Pedestrians').PedEvent, from ? { x: from.pos.x, z: from.pos.z } : undefined);
+        break;
+      }
+      case 'peds':
+        if (!this.isHost) this.svc.customers.peds?.applyRemote(m.p as number[]);
         break;
       case 'wsnap':
         this.sync.applySnapshot(m.ops as WorldOp[]);
@@ -306,6 +348,7 @@ export class Net {
         break;
       }
       case 'trade': {
+        this.svc.variants.merge(m.variants as import('../products/Catalog').Variant[]);
         const offer: TradeOffer = { tid: Number(m.tid), from: String(m.from), name: String(m.name), items: (m.items as Stack[]).filter((x) => ITEMS[x.id] && x.qty > 0), cash: Math.max(0, Number(m.cash) || 0) };
         this.offers.push(offer);
         this.svc.ui.panels.openTradeOffer(offer);
@@ -349,7 +392,9 @@ export class Net {
     if (cash > 0) this.svc.economy.forfeit(cash, 'Trade (held)');
     const tid = this.nextTid++;
     this.escrow.set(tid, { to, items, cash, at: performance.now() });
-    this.send({ t: 'trade', to, tid, items, cash });
+    // Send the product definitions along, so the other player's game knows what these items are.
+    const variants = items.map((it) => (it.v ? this.svc.variants.byKey(it.v) : undefined)).filter(Boolean);
+    this.send({ t: 'trade', to, tid, items, cash, variants });
     return 'Offer sent. Your items are held until they answer.';
   }
 
@@ -400,6 +445,20 @@ export class Net {
         v: v ? { type: v.type, c: v.color, p: [round(v.pos.x), round(v.pos.y), round(v.pos.z)], yaw: round(v.yaw), pitch: round(v.pitch), roll: round(v.roll) } : null,
       };
       this.send({ t: 'st', s: st });
+    }
+    // The host's pedestrians are the real ones: everyone else sees them where the host does.
+    if (this.isHost && this.players.size) {
+      this.pedTimer -= dt;
+      if (this.pedTimer <= 0) {
+        this.pedTimer = 0.25;
+        const peds = this.svc.customers.peds;
+        if (peds) this.send({ t: 'peds', p: peds.snapshot() });
+      }
+    }
+    const peds = this.svc.customers.peds;
+    if (peds) {
+      peds.remote = this.online && !this.isHost;
+      peds.onEvent = (e) => this.send({ t: 'pev', ...e });
     }
     if (this.isHost) {
       this.timeTimer -= dt;

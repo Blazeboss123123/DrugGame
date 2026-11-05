@@ -63,8 +63,10 @@ export function openPackagingBench(svc: Services) {
     }
     if (!variant || !list.some(([v]) => v === variant)) variant = list[0][0];
     for (const [v, n] of list) {
-      const vv = svc.variants.byKey(v)!;
-      const b = el('button', `pk-prod${v === variant ? ' on' : ''}`, `<img src="${iconFor({ id: 'prod', v }, svc.variants)}" alt=""><span><strong>${vv.name}</strong><em>${FAMILIES[vv.family].name} · ${QUALITY_NAMES[vv.quality]} · ${n} loose</em></span>`);
+      // Products from another player that this game hasn't learned yet still show (and pack) fine.
+      const vv = svc.variants.byKey(v);
+      const info = vv ? `${FAMILIES[vv.family]?.name ?? ''} · ${QUALITY_NAMES[vv.quality] ?? ''}` : 'Product';
+      const b = el('button', `pk-prod${v === variant ? ' on' : ''}`, `<img src="${iconFor({ id: 'prod', v }, svc.variants)}" alt=""><span><strong>${vv?.name ?? 'Unknown product'}</strong><em>${info} · ${n} loose</em></span>`);
       b.onclick = () => {
         if (filled) return;
         variant = v;
