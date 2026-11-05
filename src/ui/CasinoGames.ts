@@ -193,39 +193,89 @@ export function handValue(cards: Card[]): { total: number; soft: boolean } {
 
 let bjShoe: Card[] = [];
 
+/** Session results per visit, so the table can show how you're doing. */
+const bjSession = { hands: 0, won: 0, net: 0, streak: 0 };
+
+interface BjHand {
+  cards: Card[];
+  stake: number;
+  done: boolean;
+  doubled: boolean;
+  fromSplit: boolean;
+}
+
+/**
+ * Blackjack against the house dealer.
+ * Money flow: your bet leaves your cash when the cards are dealt (it sits "on the table"). A win pays
+ * the stake back PLUS the same again in profit (1:1), a natural blackjack pays 3:2 profit, a five-card
+ * hand of 21 or under wins automatically, and a push hands the stake back. Winning rounds in a row
+ * build a hot streak that adds a bonus on top of the profit.
+ */
 export function openBlackjack(svc: Services) {
-  const { overlay, body } = svc.ui.panels.shell('Blackjack', 'Dealer stands on all 17s · blackjack pays 3 to 2', true);
+  const { overlay, body } = svc.ui.panels.shell('Blackjack', 'Wins pay 1:1 profit · blackjack 3:2 · five-card charlie · hot streak bonus', true);
   let bet = svc.economy.cash >= 50 ? 50 : 10;
-  let player: Card[] = [];
+  let hands: BjHand[] = [];
+  let active = 0;
   let dealer: Card[] = [];
-  let stake = 0;
   let phase: 'bet' | 'play' | 'done' = 'bet';
-  const top = el('div', 'casino-top', cashLine(svc));
+
+  const top = el('div', 'casino-top');
+  const ledger = el('div', 'bj-ledger');
   const table = el('div', 'bj-table');
-  const dealerRow = el('div', 'hand');
-  const playerRow = el('div', 'hand');
   const dLabel = el('div', 'hand-label');
-  const pLabel = el('div', 'hand-label');
-  table.append(dLabel, dealerRow, pLabel, playerRow);
-  const result = el('p', 'result casino-result');
+  const dealerRow = el('div', 'hand');
+  const handsWrap = el('div', 'bj-hands');
+  const pot = el('div', 'bj-pot');
+  table.append(dLabel, dealerRow, pot, handsWrap);
+  const result = el('div', 'bj-result');
   const actions = el('div', 'btn-row');
   const betLabel = el('div', 'eyebrow', 'Bet');
   const bets = betRow(svc, () => bet, (n) => (bet = n), () => render());
+  const rules = el(
+    'p',
+    'bj-rules muted',
+    'Win → stake back <b>+ equal profit</b> · Blackjack → <b>+1.5×</b> · 5 cards ≤ 21 → auto win · Push → stake back · Hot streak: <b>+10% profit</b> per win in a row (max +50%)',
+  );
   const draw = () => {
-    if (bjShoe.length < 15) bjShoe = shoe(6);
+    if (bjShoe.length < 20) bjShoe = shoe(6);
     return bjShoe.pop()!;
   };
+  const onTable = () => hands.reduce((a, h) => a + h.stake, 0);
+  const streakBonus = () => Math.min(0.5, bjSession.streak * 0.1);
+
+  const chips = (amount: number) => {
+    // A little chip stack sized by the amount on the table.
+    const n = Math.max(1, Math.min(10, Math.round(Math.log2(amount / 5 + 1) * 1.6)));
+    let html = '';
+    for (let i = 0; i < n; i++) html += `<i style="bottom:${i * 4}px"></i>`;
+    return `<span class="bj-chips">${html}</span>`;
+  };
+
   const render = () => {
+    const stake = phase === 'play' ? onTable() : 0;
     top.innerHTML = cashLine(svc) + (stake ? ` <span class="muted">· on the table</span> <strong>${money(stake)}</strong>` : '');
+    ledger.innerHTML =
+      `<span>Hands <b>${bjSession.hands}</b></span><span>Won <b>${bjSession.won}</b></span>` +
+      `<span>Session <b class="${bjSession.net > 0 ? 'up' : bjSession.net < 0 ? 'down' : ''}">${bjSession.net >= 0 ? '+' : '−'}${money(Math.abs(bjSession.net))}</b></span>` +
+      `<span class="${bjSession.streak ? 'hot' : ''}">Streak <b>${bjSession.streak}${bjSession.streak ? ` · +${Math.round(streakBonus() * 100)}%` : ''}</b></span>`;
     const hideHole = phase === 'play';
     dealerRow.innerHTML = '';
     dealer.forEach((c, i) => dealerRow.appendChild(cardEl(i === 1 && hideHole ? null : c, i * 120)));
-    playerRow.innerHTML = '';
-    player.forEach((c, i) => playerRow.appendChild(cardEl(c, i * 120)));
-    const pv = handValue(player);
     const dv = handValue(hideHole ? dealer.slice(0, 1) : dealer);
     dLabel.textContent = dealer.length ? `Dealer · ${dv.total}${hideHole ? ' + ?' : ''}` : 'Dealer';
-    pLabel.textContent = player.length ? `You · ${pv.total}${pv.soft && pv.total < 21 ? ' (soft)' : ''}` : 'You';
+    pot.innerHTML = stake ? `${chips(stake)}<span>${money(stake)}</span>` : '';
+    handsWrap.innerHTML = '';
+    hands.forEach((h, i) => {
+      const box = el('div', `bj-hand${phase === 'play' && i === active && hands.length > 1 ? ' active' : ''}`);
+      const v = handValue(h.cards);
+      box.appendChild(el('div', 'hand-label', `${hands.length > 1 ? `Hand ${i + 1}` : 'You'} · ${v.total}${v.soft && v.total < 21 ? ' (soft)' : ''}${h.doubled ? ' · doubled' : ''}`));
+      const row = el('div', 'hand');
+      h.cards.forEach((c, j) => row.appendChild(cardEl(c, j * 120)));
+      box.appendChild(row);
+      handsWrap.appendChild(box);
+    });
+    if (!hands.length) handsWrap.appendChild(el('div', 'hand-label', 'You'));
+
     actions.innerHTML = '';
     const btn = (label: string, fn: () => void, primary = false, disabled = false) => {
       const b = el('button', `btn${primary ? ' primary' : ''}`, label) as HTMLButtonElement;
@@ -235,71 +285,173 @@ export function openBlackjack(svc: Services) {
     };
     betLabel.hidden = bets.hidden = phase === 'play';
     if (phase === 'play') {
+      const h = hands[active];
+      const two = h.cards.length === 2;
       btn('Hit', hit, true);
       btn('Stand', stand);
-      btn(`Double (${money(stake)})`, double, false, player.length !== 2 || svc.economy.cash < stake);
-    } else btn(phase === 'done' ? `Deal again · ${money(bet)}` : `Deal · ${money(bet)}`, deal, true, svc.economy.cash < bet);
+      btn(`Double (+${money(h.stake)})`, double, false, !two || svc.economy.cash < h.stake);
+      const canSplit = two && hands.length === 1 && cardValue(h.cards[0]) === cardValue(h.cards[1]);
+      if (canSplit) btn(`Split (+${money(h.stake)})`, split, false, svc.economy.cash < h.stake);
+    } else {
+      btn(phase === 'done' ? `Deal again · ${money(bet)}` : `Deal · ${money(bet)}`, deal, true, svc.economy.cash < bet);
+    }
   };
-  const finish = (text: string, payout: number, kind: 'good' | 'bad' | 'info') => {
+
+  const showResult = (lines: string[], net: number, paid: number, risked: number) => {
+    const cls = net > 0 ? 'win' : net < 0 ? 'lose' : 'push';
+    const head = net > 0 ? `+${money(net)} profit` : net < 0 ? `−${money(-net)}` : 'Even · stake back';
+    result.className = `bj-result ${cls}`;
+    result.innerHTML =
+      `<div class="bj-big">${head}</div>` +
+      `<div class="bj-lines">${lines.map((l) => `<div>${l}</div>`).join('')}</div>` +
+      `<div class="bj-math">Bet ${money(risked)} · paid back ${money(paid)} · cash now <b>${money(svc.economy.cash)}</b></div>`;
+    if (net > 0) {
+      const f = el('div', 'bj-float', `+${money(net)}`);
+      table.appendChild(f);
+      setTimeout(() => f.remove(), 1400);
+    }
+  };
+
+  /** Settle every hand against the dealer and pay out in one go. */
+  const settle = (dealerNatural = false) => {
     phase = 'done';
-    if (payout > 0) svc.economy.earn(payout, 'Blackjack', false);
-    result.textContent = text;
-    result.className = `result casino-result ${kind}`;
-    stake = 0;
+    const live = hands.some((h) => handValue(h.cards).total <= 21);
+    if (live && !dealerNatural) while (handValue(dealer).total < 17) dealer.push(draw());
+    const dv = handValue(dealer).total;
+    const dNat = dealer.length === 2 && dv === 21;
+    const bonus = streakBonus();
+    let paid = 0;
+    let risked = 0;
+    const lines: string[] = [];
+    hands.forEach((h, i) => {
+      const pv = handValue(h.cards).total;
+      const tag = hands.length > 1 ? `Hand ${i + 1}: ` : '';
+      const natural = !h.fromSplit && h.cards.length === 2 && pv === 21;
+      risked += h.stake;
+      let profit = 0;
+      let back = 0;
+      if (pv > 21) {
+        lines.push(`${tag}bust with ${pv} · lost ${money(h.stake)}`);
+      } else if (natural && !dNat) {
+        profit = h.stake * 1.5;
+        back = h.stake;
+        lines.push(`${tag}<b>Blackjack!</b> pays 3:2`);
+      } else if (natural && dNat) {
+        back = h.stake;
+        lines.push(`${tag}both blackjack · push`);
+      } else if (dNat) {
+        lines.push(`${tag}dealer blackjack · lost ${money(h.stake)}`);
+      } else if (h.cards.length >= 5) {
+        profit = h.stake;
+        back = h.stake;
+        lines.push(`${tag}five-card charlie (${pv}) · automatic win`);
+      } else if (dv > 21) {
+        profit = h.stake;
+        back = h.stake;
+        lines.push(`${tag}dealer busts with ${dv} · you win`);
+      } else if (pv > dv) {
+        profit = h.stake;
+        back = h.stake;
+        lines.push(`${tag}${pv} beats ${dv} · you win`);
+      } else if (pv === dv) {
+        back = h.stake;
+        lines.push(`${tag}push at ${pv} · stake back`);
+      } else {
+        lines.push(`${tag}dealer's ${dv} beats ${pv} · lost ${money(h.stake)}`);
+      }
+      if (profit > 0) {
+        if (bonus > 0) {
+          const extra = Math.round(profit * bonus);
+          lines.push(`${tag}hot streak bonus +${money(extra)}`);
+          profit += extra;
+        }
+      }
+      paid += back + profit;
+    });
+    paid = Math.round(paid);
+    if (paid > 0) svc.economy.earn(paid, 'Blackjack payout', false);
+    const net = paid - risked;
+    bjSession.hands++;
+    bjSession.net += net;
+    if (net > 0) {
+      bjSession.won++;
+      bjSession.streak++;
+      svc.audio.play('pickup');
+    } else if (net < 0) bjSession.streak = 0;
+    hands.forEach((h) => (h.done = true));
     render();
+    showResult(lines, net, paid, risked);
   };
+
+  const nextHand = () => {
+    while (active < hands.length && hands[active].done) active++;
+    if (active >= hands.length) settle();
+    else render();
+  };
+
   const deal = () => {
     if (!svc.economy.spend(bet, 'Blackjack bet')) return;
-    stake = bet;
-    player = [draw(), draw()];
+    hands = [{ cards: [draw(), draw()], stake: bet, done: false, doubled: false, fromSplit: false }];
+    active = 0;
     dealer = [draw(), draw()];
     phase = 'play';
-    result.textContent = '';
+    result.className = 'bj-result';
+    result.innerHTML = '';
     svc.audio.play('paper');
-    const pv = handValue(player).total;
+    const pv = handValue(hands[0].cards).total;
     const dv = handValue(dealer).total;
-    if (pv === 21 || dv === 21) {
-      phase = 'done';
-      if (pv === 21 && dv === 21) return finish('Both blackjack. Push, bet returned.', stake, 'info');
-      if (pv === 21) return finish(`Blackjack! You win ${money(stake * 1.5)}.`, stake * 2.5, 'good');
-      return finish('Dealer has blackjack.', 0, 'bad');
-    }
+    if (pv === 21 || dv === 21) return settle(true);
     render();
   };
   const hit = () => {
-    player.push(draw());
+    const h = hands[active];
+    h.cards.push(draw());
     svc.audio.play('paper');
-    const v = handValue(player).total;
-    if (v > 21) return finish(`Bust with ${v}. You lose ${money(stake)}.`, 0, 'bad');
-    if (v === 21) return stand();
-    render();
-  };
-  const double = () => {
-    if (!svc.economy.spend(stake, 'Blackjack double')) return;
-    stake *= 2;
-    player.push(draw());
-    const v = handValue(player).total;
-    if (v > 21) return finish(`Doubled and bust with ${v}. You lose ${money(stake)}.`, 0, 'bad');
-    stand();
+    const v = handValue(h.cards).total;
+    if (v >= 21 || h.cards.length >= 5) h.done = true;
+    nextHand();
   };
   const stand = () => {
-    phase = 'done';
-    // Dealer plays out: hits to 16, stands on all 17s.
-    while (handValue(dealer).total < 17) dealer.push(draw());
-    const pv = handValue(player).total;
-    const dv = handValue(dealer).total;
-    if (dv > 21) finish(`Dealer busts with ${dv}. You win ${money(stake)}.`, stake * 2, 'good');
-    else if (pv > dv) finish(`${pv} beats ${dv}. You win ${money(stake)}.`, stake * 2, 'good');
-    else if (pv === dv) finish(`Push at ${pv}. Bet returned.`, stake, 'info');
-    else finish(`Dealer's ${dv} beats your ${pv}. You lose ${money(stake)}.`, 0, 'bad');
+    hands[active].done = true;
+    nextHand();
   };
-  body.append(top, betLabel, bets, table, result, actions);
+  const double = () => {
+    const h = hands[active];
+    if (!svc.economy.spend(h.stake, 'Blackjack double')) return;
+    h.stake *= 2;
+    h.doubled = true;
+    h.cards.push(draw());
+    svc.audio.play('paper');
+    h.done = true;
+    nextHand();
+  };
+  const split = () => {
+    const h = hands[0];
+    if (!svc.economy.spend(h.stake, 'Blackjack split')) return;
+    const second: BjHand = { cards: [h.cards.pop()!, draw()], stake: h.stake, done: false, doubled: false, fromSplit: true };
+    h.cards.push(draw());
+    h.fromSplit = true;
+    hands.push(second);
+    svc.audio.play('paper');
+    // Split aces get one card each.
+    if (h.cards[0].rank === 14) {
+      h.done = true;
+      second.done = true;
+    }
+    for (const x of hands) if (handValue(x.cards).total === 21) x.done = true;
+    nextHand();
+  };
+
+  body.append(top, ledger, betLabel, bets, table, result, actions, rules);
   render();
   svc.ui.present(overlay, () => {
     // Walking away mid-hand forfeits the stake, like a real table.
-    if (phase === 'play' && stake) svc.ui.toast(`You left the table and forfeited ${money(stake)}.`, 'warn');
+    if (phase === 'play' && onTable()) svc.ui.toast(`You left the table and forfeited ${money(onTable())}.`, 'warn');
+    else if (bjSession.net !== 0) svc.ui.toast(`Blackjack session: ${bjSession.net > 0 ? '+' : '−'}${money(Math.abs(bjSession.net))}`, bjSession.net > 0 ? 'good' : 'info');
   });
 }
+
+const cardValue = (c: Card) => (c.rank >= 11 && c.rank <= 13 ? 10 : c.rank === 14 ? 11 : c.rank);
 
 // ------------------------------------------------------------------ double up
 export function openDoubleUp(svc: Services) {

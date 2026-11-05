@@ -1199,3 +1199,31 @@ kbd,
 /* Panels always sit above the title/pause screens. */
 .overlay { z-index: 20; }
 .fade { z-index: 40; }
+
+/* ---- blackjack v2: clear payouts */
+.bj-ledger { display: flex; flex-wrap: wrap; gap: 6px 14px; font: 600 12px var(--mono); color: #c9c3b6; margin: 0 0 8px; }
+.bj-ledger b { color: #fff; }
+.bj-ledger b.up { color: var(--good); }
+.bj-ledger b.down { color: var(--warn); }
+.bj-ledger .hot b { color: #ffb347; }
+.bj-table { position: relative; }
+.bj-hands { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+.bj-hand { padding: 4px 8px; border-radius: 10px; border: 2px solid transparent; }
+.bj-hand.active { border-color: #f0dca0; background: rgba(0, 0, 0, 0.15); }
+.bj-pot { display: flex; align-items: flex-end; justify-content: center; gap: 8px; min-height: 30px; font: 700 13px var(--mono); color: #f0dca0; }
+.bj-chips { position: relative; display: inline-block; width: 30px; height: 44px; }
+.bj-chips i { position: absolute; left: 0; width: 30px; height: 9px; border-radius: 50%; background: repeating-linear-gradient(90deg, #c8102e 0 6px, #fff 6px 9px); box-shadow: 0 2px 0 #7a0a1c; }
+.bj-result { min-height: 1.6em; margin: 4px 0 8px; border-radius: 10px; }
+.bj-result.win, .bj-result.lose, .bj-result.push { padding: 10px 14px; animation: bjpop 0.35s ease; }
+.bj-result.win { background: rgba(70, 190, 110, 0.14); border: 1px solid rgba(70, 190, 110, 0.5); }
+.bj-result.lose { background: rgba(230, 90, 70, 0.12); border: 1px solid rgba(230, 90, 70, 0.45); }
+.bj-result.push { background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.2); }
+.bj-big { font-size: 22px; font-weight: 800; }
+.bj-result.win .bj-big { color: var(--good); }
+.bj-result.lose .bj-big { color: var(--warn); }
+.bj-lines { font-size: 14px; margin: 4px 0; }
+.bj-math { font: 12px var(--mono); color: #c9c3b6; }
+.bj-rules { font-size: 12px; margin: 8px 0 0; }
+.bj-float { position: absolute; left: 50%; bottom: 40%; transform: translateX(-50%); font: 800 30px var(--mono); color: #7dffa8; text-shadow: 0 2px 8px #000; pointer-events: none; animation: bjfloat 1.4s ease-out forwards; }
+@keyframes bjfloat { from { opacity: 0; transform: translate(-50%, 20px) scale(0.8); } 20% { opacity: 1; transform: translate(-50%, 0) scale(1.1); } to { opacity: 0; transform: translate(-50%, -60px) scale(1); } }
+@keyframes bjpop { from { transform: scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
