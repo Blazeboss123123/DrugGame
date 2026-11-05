@@ -3,7 +3,7 @@ import type { Profile } from '../business/Customers';
 import { Container, type Stack } from '../inventory/Inventory';
 import type { Person } from '../npc/Pedestrians';
 import { EFFECTS, FAMILIES, INGREDIENTS, ITEMS, QUALITY_NAMES, VariantRegistry, mixEffects, unitValue, unitsOf, type Quality } from '../products/Catalog';
-import type { Kettle, MixingStation, NeonPress } from '../production/Production';
+import type { DryingRack, Kettle, MixingStation, NeonPress } from '../production/Production';
 import { iconFor, stackName } from './Icons';
 import type { UI } from './UI';
 import { DISTRICTS } from '../world/CityPlan';
@@ -256,7 +256,8 @@ export class Panels {
       inv.removeAt(prodSlot, n);
       const next = mixEffects(v.effects, ingId);
       const { variant, isNew } = this.svc.variants.get(v.family, next, v.quality, this.svc.time.day);
-      station.start({ remaining: n * 2, total: n * 2, output: { id: 'prod', qty: n, v: variant.key }, label: `${n} × ${variant.name}` });
+      const mins = n * (this.svc.upgrades.has('mixer2') ? 1 : 2);
+      station.start({ remaining: mins, total: mins, output: { id: 'prod', qty: n, v: variant.key }, label: `${n} × ${variant.name}` });
       this.svc.bus.emit('objective:signal', { id: 'mix' });
       close();
       if (isNew) this.discovery(variant.key);
@@ -375,7 +376,8 @@ export class Panels {
         if (fine) inv.remove('glitter', 1);
         const q = (fine ? 1 : 0) as Quality;
         const { variant } = this.svc.variants.get('dreamdust', ['dreamy'], q, this.svc.time.day);
-        k.start({ remaining: 60, total: 60, output: { id: 'prod', qty: 8, v: variant.key }, label: `8 × ${variant.name}` });
+        const qty = this.svc.upgrades.has('kettle2') ? 12 : 8;
+        k.start({ remaining: 60, total: 60, output: { id: 'prod', qty, v: variant.key }, label: `${qty} × ${variant.name}` });
         close();
         this.ui.toast('The kettle is brewing.', 'info');
       };
@@ -399,6 +401,80 @@ export class Panels {
       close();
     };
     body.appendChild(b);
+    this.ui.present(overlay);
+  }
+
+  openRack(r: DryingRack) {
+    const { overlay, body, close } = this.shell('Drying rack', 'Up to 20 units · 2 hours · +1 quality tier');
+    const inv = this.svc.inventory;
+    const choices: { i: number; s: Stack; q: Quality; name: string }[] = [];
+    inv.slots.forEach((s, i) => {
+      if (!s || s.id !== 'prod') return;
+      const v = this.svc.variants.byKey(s.v);
+      if (!v || v.quality >= 2) return;
+      choices.push({ i, s, q: v.quality, name: v.name });
+    });
+    if (!choices.length) {
+      body.innerHTML = '<p>Bring loose product (Standard or Fine quality) in your backpack. Drying raises it one tier: Standard → Fine → Premium. Packaged product can\u2019t be dried.</p>';
+      this.ui.present(overlay);
+      return;
+    }
+    body.innerHTML = '<p>Choose a batch to hang. It stays on the rack until you collect it.</p>';
+    const list = el('div', 'shop-list');
+    for (const c of choices) {
+      const qty = Math.min(20, c.s.qty);
+      const row = el('div', 'shop-row');
+      row.innerHTML = `<div><strong>${esc(c.name)}</strong><div class="muted">${QUALITY_NAMES[c.q]} → ${QUALITY_NAMES[c.q + 1]} · ${c.s.qty} in backpack</div></div>`;
+      const b = el('button', 'btn primary', `Dry ${qty}`);
+      b.onclick = () => {
+        const v = this.svc.variants.byKey(c.s.v)!;
+        if (!inv.remove('prod', qty, c.s.v)) return;
+        const { variant } = this.svc.variants.get(v.family, v.effects, (v.quality + 1) as Quality, this.svc.time.day);
+        r.start({ remaining: 120, total: 120, output: { id: 'prod', qty, v: variant.key }, label: `${qty} \u00d7 ${variant.name} (${QUALITY_NAMES[variant.quality]})` });
+        this.svc.audio.play('place');
+        close();
+        this.ui.toast('Hung up to dry. Ready in 2 hours.', 'info');
+      };
+      row.appendChild(b);
+      list.appendChild(row);
+    }
+    body.appendChild(list);
+    this.ui.present(overlay);
+  }
+
+  /** The corner shop counter: equipment and packaging bought over the counter, straight into the backpack. */
+  openShop(markup: number) {
+    const { overlay, body } = this.shell('Kwik Corner', 'Cooking gear and supplies · pay at the counter, carry it home', true);
+    const out = el('p', 'result');
+    const list = el('div', 'shop-list');
+    const render = () => {
+      list.innerHTML = '';
+      const items = Object.values(ITEMS).filter((d) => d.price > 0 && (d.kind === 'equipment' || d.kind === 'packaging' || d.kind === 'supply'));
+      items.sort((a, b) => (a.kind === b.kind ? a.price - b.price : a.kind === 'equipment' ? -1 : 1));
+      for (const d of items) {
+        const price = Math.round(d.price * markup);
+        const locked = !this.svc.market.unlocked(d.id);
+        const row = el('div', `shop-row${locked ? ' locked' : ''}`);
+        row.innerHTML = `<div class="shop-icon">${iconFor({ id: d.id }, this.svc.variants)}</div><div class="shop-info"><strong>${esc(d.name)}</strong> <span class="muted">$${price}</span><div class="muted small">${esc(locked ? `Unlocks at $${d.unlock!.lifetimeRevenue.toLocaleString()} lifetime sales` : d.desc)}</div></div>`;
+        const btns = el('div', 'btn-row tight');
+        for (const n of d.stack >= 5 ? [1, 5] : [1]) {
+          const b = el('button', 'btn small', `Buy ${n}`);
+          b.disabled = locked || this.svc.economy.cash < price * n;
+          b.onclick = () => {
+            const r = this.svc.market.buyNow(d.id, n, markup);
+            out.textContent = r.text;
+            out.className = `result ${r.ok ? 'good' : 'bad'}`;
+            render();
+          };
+          btns.appendChild(b);
+        }
+        row.appendChild(btns);
+        list.appendChild(row);
+      }
+    };
+    render();
+    const note = el('p', 'muted', `Cash: carry-out prices are ${Math.round((markup - 1) * 100)}% above phone orders, but there\u2019s no wait. Equipment goes in your backpack \u2014 hold it in your hotbar and press E inside a property to place it.`);
+    body.append(note, out, list);
     this.ui.present(overlay);
   }
 

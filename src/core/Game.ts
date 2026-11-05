@@ -6,7 +6,11 @@ import { runSelfTest, type SelfTestReport } from '../debug/SelfTest';
 import { Economy } from '../economy/Economy';
 import { Market } from '../economy/Market';
 import { Employees } from '../employees/Employees';
+import { PostFX } from '../environment/PostFX';
 import { Sky } from '../environment/Sky';
+import { Upgrades, UPGRADES } from '../business/Upgrades';
+import { Placement } from '../production/Placement';
+import { SHOP } from '../properties/CornerShop';
 import { Particles } from '../fx/Particles';
 import { InteractionSystem } from '../interaction/InteractionSystem';
 import { Container } from '../inventory/Inventory';
@@ -58,6 +62,9 @@ export class Game implements UIHost {
   input!: Input;
   world!: World;
   sky!: Sky;
+  postfx!: PostFX;
+  placement!: Placement;
+  upgrades!: Upgrades;
   player!: PlayerController;
   interaction!: InteractionSystem;
   production!: Production;
@@ -127,6 +134,8 @@ export class Game implements UIHost {
       held: () => this.inventory.slots[this.hotbar.selected] ?? null,
     });
     this.sky = new Sky(this.scene, this.renderer, this.settings);
+    this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.settings);
+    this.time.setDayLength(this.settings.dayLength);
     this.world = new World(svc, this.bus);
     svc.world = this.world;
     this.player = new PlayerController(this.physics, this.camera, this.world.hm, this.bus, this.settings);
@@ -136,11 +145,14 @@ export class Game implements UIHost {
     this.production = new Production(svc);
     this.customers = new Customers(svc);
     this.market = new Market(svc);
+    this.upgrades = new Upgrades(svc);
     this.rivals = new Rivals(svc);
     this.properties = new Properties(svc);
     this.vehicles = new Vehicles(svc, this.camera);
     this.particles = new Particles(this.scene);
     this.chars = new CharacterPool(this.charLib, this.scene, 42);
+    this.world.chars = this.chars;
+    this.placement = new Placement(svc, this.camera);
     this.employees = new Employees(svc, this.chars);
     this.net = new Net(svc, this.chars);
     Object.assign(svc, {
@@ -149,6 +161,7 @@ export class Game implements UIHost {
       production: this.production,
       customers: this.customers,
       market: this.market,
+      upgrades: this.upgrades,
       rivals: this.rivals,
       properties: this.properties,
       vehicles: this.vehicles,
@@ -320,6 +333,8 @@ export class Game implements UIHost {
     this.camera.fov = this.settings.fov;
     this.camera.far = Math.max(900, this.settings.viewDistance * 2);
     this.camera.updateProjectionMatrix();
+    this.time.setDayLength(this.settings.dayLength);
+    this.postfx.apply();
     this.resize();
   }
 
@@ -384,6 +399,7 @@ export class Game implements UIHost {
       rivals: this.rivals.toJSON(),
       employees: this.employees.toJSON(),
       vehicles: this.vehicles.toJSON(),
+      upgrades: this.upgrades.toJSON(),
     };
     const ok = await this.saves.write(this.slot, data);
     if (!auto) this.ui.toast(ok ? `Saved to slot ${this.slot}.` : 'Saving failed: browser storage is unavailable.', ok ? 'good' : 'warn');
@@ -398,6 +414,8 @@ export class Game implements UIHost {
     const t = d.time as { day: number; minutes: number };
     this.time.day = t.day;
     this.time.minutes = t.minutes;
+    // Real-time days follow the player's clock rather than the time stored in the save.
+    if (this.settings.dayLength === 'real') this.time.syncToClock();
     const vs = d.variants as V;
     this.variants.variants.clear();
     for (const v of vs.list) this.variants.variants.set(v.key, v);
@@ -407,6 +425,7 @@ export class Game implements UIHost {
     this.inventory.load(d.inventory as never);
     this.hotbar.selected = (d.hotbar as number) ?? 0;
     this.properties.load(d.properties as ReturnType<Properties['toJSON']>);
+    this.upgrades.load(d.upgrades as string[] | undefined);
     this.production.load(d.production as never);
     this.customers.load(d.customers as never);
     this.market.load(d.market as ReturnType<Market['toJSON']>);
@@ -453,6 +472,7 @@ export class Game implements UIHost {
           { label: 'Home · 14 Larch St', run: tp(this.world.starter.spawn.x, this.world.starter.spawn.z, 0) },
           { label: 'Garage (inside)', run: () => this.teleportTo(STARTER.house.x + 3.8, STARTER.house.z + 1.5, 0, this.world.starter.floorY + 0.05) },
           ...PROPERTIES.map((p) => ({ label: p.name, run: tp(p.x, p.z + p.d / 2 + 3, 0) })),
+          { label: 'Kwik Corner shop', run: tp(SHOP.x, SHOP.z - SHOP.d / 2 - 3, Math.PI) },
           { label: 'Meridian Civic Plaza', run: tp(37.5, -30, 0) },
           { label: 'Main St, downtown', run: tp(40, 5.8, -Math.PI / 2) },
           { label: 'Market Row', run: tp(225, 40, 0) },
@@ -539,6 +559,31 @@ export class Game implements UIHost {
             run: () => {
               this.production.install('kettle');
               this.production.install('press');
+            },
+          },
+          {
+            label: 'Equipment pack (pots, lamps, rack, storage)',
+            run: () => {
+              const kit: [string, number][] = [
+                ['pot', 4],
+                ['lamp', 2],
+                ['rack', 1],
+                ['storage', 1],
+                ['mixer', 1],
+              ];
+              const lost = kit.reduce((s, [id, q]) => s + this.inventory.add(id, q), 0);
+              return lost ? 'Some equipment did not fit in your backpack.' : 'Equipment added. Hold one and press E inside your property to place it.';
+            },
+          },
+          {
+            label: 'Unlock every upgrade',
+            run: () => {
+              this.economy.earn(10000, 'Cheat sales', true);
+              for (const u of UPGRADES) if (!this.upgrades.has(u.id)) {
+                this.economy.earn(u.price, 'Cheat', false);
+                this.upgrades.buy(u.id);
+              }
+              return 'Every upgrade is yours, including both converted rooms.';
             },
           },
           { label: 'Request a deal now', run: () => this.customers.forceDeal() },
@@ -632,6 +677,7 @@ export class Game implements UIHost {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.postfx?.resize();
   }
 
   private loop = () => {
@@ -640,7 +686,7 @@ export class Game implements UIHost {
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     if (!this.externalDrive) this.tick(dt);
-    this.renderer.render(this.scene, this.camera);
+    this.postfx.render();
   };
 
   private handleKeys() {
@@ -657,7 +703,7 @@ export class Game implements UIHost {
     else if (i.wasPressed('KeyM')) this.ui.phone.open();
     else if (i.wasPressed('Digit5')) this.openCheats();
     else if (i.wasPressed('KeyT')) this.openChat();
-    else if (i.wasPressed('KeyR')) {
+    else if (i.wasPressed('KeyR') && !this.placement.heldKind()) {
       const msg = this.player.toggleBoard();
       if (msg) this.ui.toast(msg, 'warn');
     }
@@ -689,8 +735,12 @@ export class Game implements UIHost {
       this.player.update(dt, this.input, playing);
       this.physics.step(dt);
       this.interaction.update(dt, this.input, playing);
+      // Holding equipment: E places it, unless you're aiming at something you can use (a door, a pot...).
+      const free = !this.interaction.carrying && !this.interaction.current;
+      this.placement.update(this.input, playing && free);
     } else {
       this.interaction.update(0, this.input, false);
+      this.placement.update(this.input, false);
     }
     if (playing && !this.player.canBoard() && this.player.onBoard) this.player.toggleBoard();
     // Camera shake from crashes.
@@ -699,11 +749,12 @@ export class Game implements UIHost {
       this.camera.position.x += (Math.random() - 0.5) * this.shakeAmt * 0.3;
       this.camera.position.y += (Math.random() - 0.5) * this.shakeAmt * 0.3;
     }
-    const inside = this.properties.siteAt(this.player.position) !== null;
+    const inside = this.properties.siteAt(this.player.position) !== null || this.world.shop?.inside(this.player.position) === true;
     this.indoors = inside;
     this.indoorBlend += ((this.indoors ? 1 : 0) - this.indoorBlend) * Math.min(1, dt * 3);
     const focus = this.mode === 'title' ? this.camera.position : this.player.position;
-    this.sky.update(this.time, focus, this.indoorBlend);
+    this.sky.update(this.time, focus, this.indoorBlend, dt, this.camera);
+    this.postfx.update(this.sky.night, this.sky.dusk);
     this.world.update(dt, this.sky.night, this.player.position);
     const m = this.time.minutes;
     const simDt = playing || this.externalDrive ? dt : 0;

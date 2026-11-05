@@ -100,6 +100,8 @@ export const STARTER = {
   lot: { x0: -65, z0: -109, x1: -45, z1: -85 },
   house: { x: -55, z: -95, w: 12, d: 10 },
   plaza: { x0: 10, z0: -65, x1: 65, z1: -10 },
+  /** Kwik Corner shop lot, across Larch Street from the house (see properties/CornerShop.ts). */
+  shop: { x0: -62, z0: -67, x1: -38, z1: -44 },
 };
 
 const CAR_COLORS = [0x8f2b2b, 0x2b3f63, 0xd7d4cc, 0x1d1f22, 0x5f6a70, 0x30503f, 0x9a7a3c, 0xb6b9bd, 0x6b2f4a, 0x2f6b7a];
@@ -130,10 +132,11 @@ export function generateCity(seed = 1337): CityContent {
     lots: [],
     containers: [],
     parks: [],
-    reserved: [STARTER.lot, STARTER.plaza, ...PROPERTY_LOTS],
+    reserved: [STARTER.lot, STARTER.plaza, STARTER.shop, ...PROPERTY_LOTS],
     propFree: [
       { x0: -54.5, z0: -86, x1: -47.5, z1: -70 }, // starter driveway approach
       { x0: -59.5, z0: -86, x1: -55.5, z1: -78 }, // starter front path
+      { x0: -53, z0: -74, x1: -47, z1: -61 }, // crossing to the corner shop door
     ],
   };
   const inset = 10;

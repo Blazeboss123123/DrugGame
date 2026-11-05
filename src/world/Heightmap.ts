@@ -11,6 +11,8 @@ export interface Pad {
   h?: number;
   /** Fixed height offset added on top of the sampled average (rarely used). */
   raise?: number;
+  /** Keep this plot exactly flat (enterable buildings). Other plots may be eased by the slope limiter. */
+  lock?: boolean;
 }
 
 /**
@@ -75,7 +77,8 @@ export class Heightmap {
     if (inGridX(cx, 10)) {
       const n = nearestLine(Z_LINES, cz);
       const d = Math.max(0, Math.min(Math.abs(p.z0 - n.line), Math.abs(p.z1 - n.line)));
-      if (d < bestDist) {
+      // Streets win ties: buildings face streets (north/south).
+      if (d <= bestDist) {
         bestDist = d;
         best = [Math.max(p.x0, Math.min(p.x1, cx)), n.line + Math.sign(cz - n.line) * edge];
       }
@@ -98,6 +101,7 @@ export class Heightmap {
     const V = this.verts;
     const best = new Float32Array(V * V);
     const target = new Float32Array(V * V);
+    const lockPad = new Uint8Array(V * V);
     for (const p of pads) if (p.h === undefined) p.h = this.padHeight(p);
     for (const p of pads) {
       const i0 = Math.max(0, Math.floor((p.x0 - p.blend + this.half) / this.step));
@@ -116,6 +120,7 @@ export class Heightmap {
           if (w > best[k]) {
             best[k] = w;
             target[k] = p.h!;
+            lockPad[k] = p.lock ? 1 : 0;
           }
         }
       }
@@ -129,7 +134,7 @@ export class Heightmap {
         const onRoad = onRoadCorridor(this.xAt(i), this.xAt(j));
         if (onRoad) locked[k] = 1;
         else if (best[k] > 0) this.data[k] = lerp(this.data[k], target[k], best[k]);
-        if (best[k] >= 1) locked[k] = 1;
+        if (best[k] >= 1 && lockPad[k]) locked[k] = 1;
       }
     this.limitSlopes(locked);
   }
@@ -138,7 +143,7 @@ export class Heightmap {
    * Keeps every walkable bank climbable: relaxes unlocked cells until no step to a neighbour exceeds
    * the controller's climb limit. Roads and plot interiors stay fixed.
    */
-  limitSlopes(locked: Uint8Array, maxAngleDeg = 40, passes = 400): void {
+  limitSlopes(locked: Uint8Array, maxAngleDeg = 34, passes = 500): void {
     const V = this.verts;
     const d = Math.tan((maxAngleDeg * Math.PI) / 180) * this.step;
     const h = this.data;

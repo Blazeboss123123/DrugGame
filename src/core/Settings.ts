@@ -10,6 +10,9 @@ export interface Settings {
   viewDistance: number; // metres
   renderScale: number; // 0.5 .. 1
   showFps: boolean;
+  graphics: 'low' | 'high' | 'ultra';
+  /** Real minutes per in-game day, or 'real' to follow your clock. */
+  dayLength: 24 | 48 | 120 | 'real';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -24,6 +27,8 @@ export const DEFAULT_SETTINGS: Settings = {
   viewDistance: 650,
   renderScale: 1,
   showFps: false,
+  graphics: 'high',
+  dayLength: 24,
 };
 
 const KEY = 'underworld-empire.settings.v1';

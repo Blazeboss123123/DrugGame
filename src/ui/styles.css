@@ -1013,6 +1013,7 @@ kbd,
 .loyalty.need i { background: #d98a2b; }
 .loyalty.hostile i { background: #b3261e; }
 .k.sale::before { background: #e0e0e0; border-radius: 2px; }
+.k.shop::before { background: #2bb673; transform: rotate(45deg) scale(0.8); }
 .k.car::before { background: #9ad0ff; }
 .k.mate::before { background: #ff7ad1; }
 
@@ -1023,3 +1024,16 @@ kbd,
 .hud .chat-feed .cl.sys { color: #a8d9b8; font-style: italic; }
 .hud .chat-input { position: absolute; left: 20px; bottom: 140px; width: min(420px, 70vw); padding: 8px 10px; background: rgba(14, 17, 21, 0.9); border: 1px solid var(--sodium); color: var(--paper); font: 14px var(--body); pointer-events: auto; }
 .hud .deal-track { display: flex; flex-direction: column; gap: 8px; }
+
+/* Corner shop and drying rack lists */
+.shop-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; padding-right: 4px; }
+.shop-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); }
+.shop-row > div:first-child, .shop-info { flex: 1; min-width: 0; }
+.shop-row.locked { opacity: 0.5; }
+.shop-icon { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; }
+.shop-icon svg, .shop-icon img { width: 100%; height: 100%; }
+.panel .small { font-size: 12px; margin-top: 2px; line-height: 1.35; }
+.btn-row.tight { gap: 6px; flex-wrap: nowrap; }
+.upg-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 12px; background: rgba(255,255,255,0.05); margin-bottom: 8px; }
+.upg-card.owned { border: 1px solid var(--good); }
+.upg-card .upg-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }

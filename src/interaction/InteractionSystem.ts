@@ -71,14 +71,18 @@ export class InteractionSystem {
       ['E', 'Set down'],
       ['G', 'Drop'],
     ]);
-    else if (this.current) this.svc.ui.hud.setPrompt(this.current.prompt(), [['E', '']]);
+    else if (this.current) {
+      const sec = this.current.secondaryPrompt?.();
+      this.svc.ui.hud.setPrompt(this.current.prompt(), sec ? [['E', 'Use'], ['F', sec]] : [['E', '']]);
+    }
     else this.svc.ui.hud.setPrompt(null);
 
     if (!active) return;
     if (input.wasPressed('KeyE')) {
       if (this.carrying) this.place();
       else if (this.current) this.current.interact();
-    } else if (input.wasPressed('KeyG') && this.carrying) this.drop();
+    } else if (input.wasPressed('KeyF') && this.current?.secondaryPrompt?.()) this.current.secondary?.();
+    else if (input.wasPressed('KeyG') && this.carrying) this.drop();
   }
 
   pickUp(p: Pickup): void {

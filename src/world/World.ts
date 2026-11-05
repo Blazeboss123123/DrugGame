@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import type { EventBus } from '../core/EventBus';
 import { nextFrame } from '../core/math';
 import type { Services } from '../core/Services';
+import { CornerShop, SHOP_PAD } from '../properties/CornerShop';
+import type { CharacterPool } from '../npc/Characters';
 import { StarterHouse } from '../properties/StarterHouse';
 import { buildBuildings } from './Buildings';
 import { STARTER, generateCity, type CityContent } from './CityGenerator';
@@ -9,7 +11,7 @@ import { DISTRICTS, districtAt, type District } from './CityPlan';
 import { Heightmap, type Pad } from './Heightmap';
 import { buildPlaza } from './Plaza';
 import { buildProps, buildRooftop, type PropsResult } from './Props';
-import { buildRoads } from './Roads';
+import { buildRoads, waterNormals } from './Roads';
 import { bakeTerrain } from './TerrainGen';
 import { KIT_BUILDINGS, KitAssets, type KitName } from './KitAssets';
 import { Rng } from '../core/math';
@@ -24,6 +26,9 @@ export class World {
   readonly hm = new Heightmap();
   content!: CityContent;
   starter!: StarterHouse;
+  shop!: CornerShop;
+  /** Character pool for hand-placed NPCs (the shopkeeper); set by Game before init. */
+  chars: CharacterPool | null = null;
   stats = { buildings: 0, trees: 0, cars: 0, colliders: 0 };
   private nightMats: THREE.MeshStandardMaterial[] = [];
   private props!: PropsResult;
@@ -50,11 +55,12 @@ export class World {
     progress(0.25, 'Zoning the districts');
     await nextFrame();
     this.content = generateCity();
-    const starterPad: Pad = { ...STARTER.lot, blend: 3 };
-    const plazaPad: Pad = { ...STARTER.plaza, blend: 3 };
+    const starterPad: Pad = { ...STARTER.lot, blend: 4, lock: true };
+    const plazaPad: Pad = { ...STARTER.plaza, blend: 3, lock: true };
+    const shopPad: Pad = { ...SHOP_PAD, blend: 4, lock: true };
     // Property plots: levelled a little beyond the building so the doors meet flat ground.
-    for (const p of PROPERTIES) this.propertyPads.set(p.id, { x0: p.x - p.w / 2 - 2, x1: p.x + p.w / 2 + 2, z0: p.z - p.d / 2 - 2, z1: p.z + p.d / 2 + 6, blend: 6 });
-    this.hm.applyPads([starterPad, plazaPad, ...this.propertyPads.values(), ...this.content.pads]);
+    for (const p of PROPERTIES) this.propertyPads.set(p.id, { x0: p.x - p.w / 2 - 2, x1: p.x + p.w / 2 + 2, z0: p.z - p.d / 2 - 2, z1: p.z + p.d / 2 + 6, blend: 6, lock: true });
+    this.hm.applyPads([starterPad, plazaPad, shopPad, ...this.propertyPads.values(), ...this.content.pads]);
 
     progress(0.38, 'Laying the ground');
     await nextFrame();
@@ -87,6 +93,8 @@ export class World {
     progress(0.8, 'Listing properties for sale');
     await nextFrame();
     await this.svc.properties.build(this.hm, this.propertyPads);
+    this.shop = new CornerShop(this.svc, this.hm, shopPad, this.chars);
+    await this.shop.build();
 
     progress(0.86, 'Planting trees and parking cars');
     await nextFrame();
@@ -107,9 +115,12 @@ export class World {
   }
 
   update(dt: number, night: number, playerPos: THREE.Vector3): void {
+    waterNormals.offset.y -= dt * 0.08;
+    waterNormals.offset.x += dt * 0.01;
     for (const m of this.nightMats) m.emissiveIntensity = night * (m.emissiveMap ? 1.25 : 3);
     this.props.lightPools.opacity = night * 0.55;
     this.starter.update(night);
+    this.shop?.update(dt, night);
 
     // Traffic signals: avenue and street alternate (14 s green, 3 s amber).
     this.signalClock = (this.signalClock + dt) % 34;

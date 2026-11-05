@@ -2,6 +2,7 @@ import type * as THREE from 'three';
 import type { AudioManager } from '../audio/AudioManager';
 import type { Customers } from '../business/Customers';
 import type { Rivals } from '../business/Rivals';
+import type { Upgrades } from '../business/Upgrades';
 import type { Employees } from '../employees/Employees';
 import type { Properties } from '../properties/Properties';
 import type { Vehicles } from '../vehicles/Vehicles';
@@ -41,6 +42,7 @@ export interface Services {
   customers: Customers;
   world: World;
   rivals: Rivals;
+  upgrades: Upgrades;
   employees: Employees;
   properties: Properties;
   vehicles: Vehicles;

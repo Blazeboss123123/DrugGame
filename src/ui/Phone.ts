@@ -2,19 +2,22 @@ import type { Services } from '../core/Services';
 import { ROLES, SHIFTS, type Role, type Shift } from '../employees/Employees';
 import { DELIVERY_MINUTES } from '../economy/Market';
 import { GANGS, GANG_IDS } from '../business/Rivals';
+import { UPGRADES } from '../business/Upgrades';
 import { EFFECTS, FAMILIES, INGREDIENTS, ITEMS, QUALITY_NAMES, unitValue } from '../products/Catalog';
 import { PROPERTIES } from '../properties/PropertyDefs';
+import { SHOP } from '../properties/CornerShop';
 import { PAINTS, VEHICLE_TYPES, type VehicleType } from '../vehicles/Vehicles';
 import { DISTRICTS, GRID, WORLD_HALF, X_LINES, Z_LINES, districtAt, riverX, type District } from '../world/CityPlan';
 import { iconFor } from './Icons';
 import { effectChips } from './Panels';
 import type { UI } from './UI';
 
-type App = 'home' | 'messages' | 'thread' | 'market' | 'contacts' | 'products' | 'finance' | 'map' | 'staff' | 'properties' | 'vehicles' | 'turf' | 'online';
+type App = 'home' | 'messages' | 'thread' | 'market' | 'upgrades' | 'contacts' | 'products' | 'finance' | 'map' | 'staff' | 'properties' | 'vehicles' | 'turf' | 'online';
 
 const APPS: { id: App; name: string; color: string; glyph: string }[] = [
   { id: 'messages', name: 'Messages', color: '#3fae6a', glyph: '✉' },
   { id: 'market', name: 'Market', color: '#d98a2b', glyph: '⛁' },
+  { id: 'upgrades', name: 'Upgrades', color: '#3a8f5c', glyph: '▲' },
   { id: 'contacts', name: 'Customers', color: '#4a7fc1', glyph: '☺' },
   { id: 'products', name: 'Products', color: '#8a5cc2', glyph: '❖' },
   { id: 'staff', name: 'Staff', color: '#2f6b7a', glyph: '⚒' },
@@ -159,12 +162,12 @@ export class Phone {
           ['Mixers', INGREDIENTS.map((i) => i.item)],
           ['Packaging', ['baggie', 'jar']],
           ['Dreamdust & Neon', ['moonsalt', 'starwater', 'resin']],
-          ['Equipment (installed at the delivery address)', ['pot', 'mixer', 'packager', 'kettle', 'press']],
+          ['Equipment (delivered as boxes; hold one and press E to place it)', ['pot', 'lamp', 'rack', 'storage', 'mixer', 'packager', 'kettle', 'press']],
           ['Gear', ['skateboard']],
         ];
         const total = [...this.cart].reduce((a, [id, q]) => a + ITEMS[id].price * q, 0);
         for (const [g, ids] of groups) {
-          html += `<div class="mk-group">${g}</div>`;
+          html += `<div class="mk-group"${g.startsWith('Equipment') ? ' id="mk-equip"' : ''}>${g}</div>`;
           for (const id of ids) {
             const d = ITEMS[id];
             const block = s.market.canBuy(id, this.deliverTo);
@@ -174,6 +177,26 @@ export class Phone {
         }
         const pend = s.market.pending.map((p) => `#${p.id} → ${esc(s.properties.name(p.site))} in ${Math.max(0, Math.ceil(p.arrives - (t.day * 1440 + t.minutes)))} min`).join(' · ');
         html += `<div class="mk-foot"><div>${pend || `Delivered in ~${DELIVERY_MINUTES} min`}</div><button class="pbtn ok" data-order="1" ${total ? '' : 'disabled'}>Order · $${total}</button></div>`;
+        break;
+      }
+      case 'upgrades': {
+        html += this.header('Upgrades');
+        html += '<p class="empty">Expand your operation. Equipment you order arrives in boxes at the delivery address; carry it in and press E to set it down anywhere in a workspace. The Kwik Corner shop on Ash Ave sells the same gear over the counter.</p>';
+        for (const grp of ['Property', 'Production', 'Business'] as const) {
+          html += `<div class="mk-group">${grp}</div>`;
+          for (const u of UPGRADES.filter((x) => x.group === grp)) {
+            const st = s.upgrades.status(u);
+            const owned = s.upgrades.has(u.id);
+            html += `<div class="contact upg-card${owned ? ' owned' : ''}${st && !owned ? ' locked' : ''}"><div class="contact-top"><strong>${esc(u.name)}</strong><span>${owned ? 'Owned' : `$${u.price.toLocaleString()}`}</span></div><p class="small">${esc(u.desc)}</p><div class="emp-actions">${owned ? '<span class="muted">Active</span>' : st ? `<span class="muted small">${esc(st)}</span>` : `<button class="pbtn ok" data-upgrade="${u.id}" ${s.economy.cash < u.price ? 'disabled' : ''}>Buy · $${u.price.toLocaleString()}</button>`}</div></div>`;
+          }
+        }
+        html += '<div class="mk-group">Your workspaces</div>';
+        for (const id of s.properties.ownedList()) {
+          const site = s.production.sites.get(id);
+          if (!site) continue;
+          const kinds = ['pot', 'lamp', 'rack', 'storage', 'mixer', 'packager', 'kettle', 'press'].map((k) => [k, site.count(k)] as const).filter(([, n]) => n > 0);
+          html += `<div class="contact"><div class="contact-top"><strong>${esc(s.properties.name(id))}</strong><span>${site.stations.length} placed</span></div><span class="muted small">${kinds.map(([k, n]) => `${n} × ${ITEMS[k].name}`).join(' · ') || 'Empty'}</span><div class="emp-actions"><button class="pbtn" data-orderfor="${id}">Order equipment here</button></div></div>`;
+        }
         break;
       }
       case 'contacts': {
@@ -277,7 +300,7 @@ export class Phone {
       }
       case 'map': {
         html += this.header('Map');
-        html += '<canvas class="map" width="560" height="560"></canvas><div class="map-key"><span class="k home">Your places</span><span class="k you">You</span><span class="k deal">Deals</span><span class="k cop">Police</span><span class="k sale">For sale</span><span class="k car">Cars</span><span class="k mate">Players</span></div>';
+        html += '<canvas class="map" width="560" height="560"></canvas><div class="map-key"><span class="k home">Your places</span><span class="k you">You</span><span class="k deal">Deals</span><span class="k cop">Police</span><span class="k sale">For sale</span><span class="k shop">Shop</span><span class="k car">Cars</span><span class="k mate">Players</span></div>';
         break;
       }
       case 'online': {
@@ -346,6 +369,12 @@ export class Phone {
       const r = s.market.order(this.cart, this.deliverTo);
       if (r.ok) this.cart.clear();
       this.say(r.text);
+    });
+    on('[data-upgrade]', (b) => this.say(s.upgrades.buy(b.dataset.upgrade!)));
+    on('[data-orderfor]', (b) => {
+      this.deliverTo = b.dataset.orderfor!;
+      this.go('market');
+      this.screen.querySelector('#mk-equip')?.scrollIntoView();
     });
     on('[data-rename]', (b) => {
       this.ui.dismiss();
@@ -454,6 +483,16 @@ export class Phone {
       g.strokeRect(X(x) - 7, X(z) - 7, 14, 14);
     };
     sq(-55, -95, '#f2a23a');
+    // Kwik Corner: green diamond.
+    g.save();
+    g.translate(X(SHOP.x), X(SHOP.z));
+    g.rotate(Math.PI / 4);
+    g.fillStyle = '#2bb673';
+    g.strokeStyle = '#111';
+    g.lineWidth = 2;
+    g.fillRect(-6, -6, 12, 12);
+    g.strokeRect(-6, -6, 12, 12);
+    g.restore();
     for (const p of PROPERTIES) sq(p.x, p.z, s.properties.owns(p.id) ? '#f2a23a' : '#e0e0e0');
     for (const v of s.vehicles.list) dot(v.pos.x, v.pos.z, '#9ad0ff', 5);
     for (const d of s.customers.deals) if (d.status === 'accepted') dot(d.meet.x, d.meet.z, '#3ddc84', 8);

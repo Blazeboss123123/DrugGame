@@ -7,6 +7,8 @@ import { GeoBatch } from '../world/GeoBatch';
 import type { Heightmap, Pad } from '../world/Heightmap';
 import { noiseTexture, plasterTexture, shingleTexture, stoneTexture, woodFloorTexture } from '../world/Textures';
 import { BuildKit } from './BuildKit';
+import * as F from './Furniture';
+import type { Collider } from '@dimforge/rapier3d-compat';
 
 const H = 3; // wall height
 const FLOOR = 0.45; // floor height above the lot
@@ -45,6 +47,9 @@ export class StarterHouse {
   garageDoor!: RollerDoor;
   readonly circuits: LightCircuit[] = [];
   private wasInside = false;
+  private rooms: Record<string, { group: THREE.Group; colliders: Collider[] }> = {};
+  private converted = new Set<string>();
+  private lamp: THREE.PointLight | null = null;
 
   constructor(
     private svc: Services,
@@ -87,6 +92,7 @@ export class StarterHouse {
       this.svc.bus.emit('interior:change', { inside });
       if (inside) this.svc.bus.emit('objective:signal', { id: 'enterHouse' });
     }
+    if (this.lamp) this.lamp.intensity = nightFactor * 2.2;
     this.screenMat.emissiveIntensity = 0.9 + Math.sin(performance.now() / 900) * 0.05;
   }
 
@@ -211,36 +217,91 @@ export class StarterHouse {
   }
 
   private furniture(k: BuildKit) {
-    // Living area (east half of the front room).
-    k.box('rug', -1.9, 0.005, 0.1, 1.3, 0.02, 2.4, { collide: false });
-    k.box('fabric', -1.85, 0, 0.3, -1.0, 0.45, 2.1, { surface: 'wood' }); // sofa seat
-    k.box('fabric', -1.95, 0, 0.3, -1.65, 0.95, 2.1, { collide: false }); // backrest
-    k.box('fabric', -1.95, 0, 0.12, -1.0, 0.65, 0.32, { collide: false }); // arms
-    k.box('fabric', -1.95, 0, 2.08, -1.0, 0.65, 2.28, { collide: false });
-    k.box('darkWood', -0.2, 0, 0.8, 0.6, 0.42, 1.7, { surface: 'wood' }); // coffee table
-    k.box('darkWood', 1.4, 0, 0.3, 1.9, 0.5, 1.9, { surface: 'wood' }); // TV stand
-    k.box('black', 1.6, 0.5, 0.35, 1.68, 1.35, 1.85, { collide: false }); // TV
-    // Kitchen (west half).
-    k.box('white', -5.92, 0, -0.85, -5.25, 1.85, -0.2, { surface: 'metal' }); // fridge
-    k.box('darkWood', -5.92, 0, -0.18, -5.3, 0.88, 1.85, { surface: 'wood' }); // counter
-    k.box('stone', -5.95, 0.88, -0.2, -5.27, 0.92, 1.88, { collide: false });
-    k.box('metal', -5.8, 0.89, 0.6, -5.4, 0.93, 1.1, { collide: false }); // sink
-    k.box('darkWood', -4.8, 0, 2.6, -3.9, 0.76, 3.5, { surface: 'wood' }); // dining table
-    k.box('darkWood', -5.25, 0, 2.85, -4.9, 0.46, 3.2, { surface: 'wood' }); // chairs
-    k.box('darkWood', -3.8, 0, 2.85, -3.45, 0.46, 3.2, { surface: 'wood' });
-    // Back room: bed, nightstand, desk, wardrobe.
-    k.box('darkWood', -5.85, 0, -4.9, -4.15, 0.45, -2.85, { surface: 'wood' }); // bed frame
-    k.box('linen', -5.8, 0.45, -4.85, -4.2, 0.62, -2.9, { collide: false });
-    k.box('white', -5.6, 0.62, -4.75, -4.4, 0.72, -4.35, { collide: false }); // pillow
-    k.box('darkWood', -5.9, 0, -4.98, -4.1, 1.05, -4.88, { collide: false }); // headboard
-    k.box('darkWood', -3.95, 0, -4.9, -3.45, 0.55, -4.45, { surface: 'wood' }); // nightstand
-    k.box('darkWood', -1.0, 0, -4.9, 0.7, 0.74, -4.25, { surface: 'wood' }); // desk
-    k.box('darkWood', -0.35, 0, -3.9, 0.15, 0.46, -3.45, { surface: 'wood' }); // chair
-    k.box('darkWood', -0.35, 0.46, -3.47, 0.15, 0.95, -3.4, { collide: false });
-    k.box('darkWood', 1.2, 0, -3.4, 1.9, 2.0, -1.4, { surface: 'wood' }); // wardrobe
+    const o = this.origin;
+    const room = (name: 'front' | 'back' | 'fixed') => {
+      const g = new THREE.Group();
+      g.name = `furniture-${name}`;
+      g.position.copy(o);
+      this.group.add(g);
+      this.rooms[name] = { group: g, colliders: [] };
+      return this.rooms[name];
+    };
+    const put = (r: { group: THREE.Group; colliders: Collider[] }, p: F.Piece) => {
+      r.group.add(p.group);
+      if (p.box) {
+        const [x0, y0, z0, x1, y1, z1] = p.box;
+        r.colliders.push(k.collider(x0, y0, z0, x1, y1, z1, 'wood'));
+      }
+    };
+    // Fixed pieces that stay whatever the rooms become: kitchen, bed, nightstand and desk (computer).
+    const fixed = room('fixed');
+    put(fixed, F.kitchen(-5.6, -0.9, 1.9));
+    put(fixed, F.bed(-5.0, -3.85));
+    put(fixed, F.nightstand(-3.7, -4.65));
+    put(fixed, F.desk(-0.15, -4.58));
+    put(fixed, F.painting(-5.87, 1.75, -3.85, Math.PI / 2, 1));
+    put(fixed, F.curtains(-3.95, 1.55, -4.86, 0, 1.6));
+    put(fixed, F.curtains(-0.1, 1.55, 4.86, Math.PI, 2.0));
+    put(fixed, F.curtains(-4.7, 1.55, 4.86, Math.PI, 1.4, 0x5d6b52));
+
+    // Front room: living area and dining table. Cleared when the front room is converted.
+    const front = room('front');
+    put(front, F.rug(-0.3, 1.25, 3.2, 2.3));
+    put(front, F.sofa(-1.5, 1.2));
+    put(front, F.coffeeTable(0.2, 1.25));
+    put(front, F.tvUnit(1.62, 1.2));
+    const lamp = F.floorLamp(-1.65, 2.55);
+    put(front, lamp);
+    this.lamp = lamp.light;
+    put(front, F.plant(1.55, 3.9, 1.2));
+    put(front, F.diningSet(-4.3, 3.05));
+    put(front, F.painting(1.9, 1.75, 0.6, -Math.PI / 2, 2, 1.1, 0.7));
+
+    // Back room extras (bed side stays put).
+    const back = room('back');
+    put(back, F.wardrobe(1.55, -2.4));
+    put(back, F.bookshelf(-2.9, -4.72, -Math.PI / 2));
+    put(back, F.rug(-1.6, -2.7, 2.2, 1.6));
+    put(back, F.plant(1.5, -4.5, 0.9));
+
+    for (const r of Object.values(this.rooms)) r.group.traverse((m) => ((m as THREE.Mesh).isMesh ? (m.receiveShadow = true) : null));
     // Garage: storage shelving along the back wall (production stations are added by Production).
     for (const y of [0.05, 0.75, 1.45]) k.box('metal', 2.4, y, -4.9, 4.9, y + 0.04, -4.35, { surface: 'metal' });
     for (const x of [2.42, 4.86]) k.box('metal', x - 0.02, 0, -4.9, x + 0.02, 2.0, -4.35, { surface: 'metal' });
+  }
+
+  /**
+   * Turns a living room into production floor space: the room's furniture is removed (meshes and
+   * colliders), and work lights go up. Idempotent, so it is also safe to call while loading a save.
+   */
+  convertRoom(name: 'front' | 'back'): void {
+    const r = this.rooms[name];
+    if (!r || this.converted.has(name)) return;
+    this.converted.add(name);
+    this.group.remove(r.group);
+    for (const c of r.colliders) this.svc.physics.world.removeCollider(c, false);
+    r.colliders.length = 0;
+    if (name === 'front') this.lamp = null;
+    // A bare-bulb work light and a few cable runs mark the room as an operation now.
+    const L = (x: number, y: number, z: number) => this.L(x, y, z);
+    const spot = name === 'front' ? [-1.5, 2] : [-1, -2.7];
+    const light = new THREE.PointLight(0xfff1dc, 3.2, 9, 2);
+    light.position.copy(L(spot[0], H - 0.5, spot[1]));
+    this.group.add(light);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff1dc, emissiveIntensity: 3 }));
+    bulb.position.copy(light.position);
+    const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.45, 6), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+    cord.position.copy(L(spot[0], H - 0.25, spot[1]));
+    const tarp = new THREE.Mesh(new THREE.PlaneGeometry(name === 'front' ? 6.5 : 5.3, name === 'front' ? 5.4 : 2.8), new THREE.MeshStandardMaterial({ color: 0x5f6b72, roughness: 0.95 }));
+    tarp.rotation.x = -Math.PI / 2;
+    tarp.position.copy(name === 'front' ? L(-1.6, 0.012, 2.0) : L(-1.0, 0.012, -2.65));
+    tarp.receiveShadow = true;
+    this.group.add(bulb, cord, tarp);
+    this.svc.bus.emit('toast', { text: name === 'front' ? 'Front room cleared for production' : 'Back room cleared for production' });
+  }
+
+  isConverted(name: 'front' | 'back'): boolean {
+    return this.converted.has(name);
   }
 
   private interactive(mats: Record<string, THREE.Material>) {
@@ -291,14 +352,14 @@ export class StarterHouse {
 
     // Computer on the desk.
     const monitor = ownMaterial(new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.4, 0.04), mats.black as THREE.MeshStandardMaterial));
-    monitor.position.copy(L(-0.15, 1.04, -4.72));
+    monitor.position.copy(L(-0.15, 1.08, -4.72));
     const stand = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.26, 0.06), mats.black);
-    stand.position.copy(L(-0.15, 0.82, -4.74));
+    stand.position.copy(L(-0.15, 0.86, -4.74));
     this.screenMat = new THREE.MeshStandardMaterial({ color: 0x0f1a22, emissive: 0x3d86a8, emissiveIntensity: 0.9 });
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.34), this.screenMat);
-    screen.position.copy(L(-0.15, 1.04, -4.697));
+    screen.position.copy(L(-0.15, 1.08, -4.697));
     const kb = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.02, 0.14), mats.metal);
-    kb.position.copy(L(-0.15, 0.75, -4.48));
+    kb.position.copy(L(-0.15, 0.775, -4.42));
     this.group.add(monitor, stand, screen, kb);
     const computer = new SimpleInteractable('computer', () => 'Use computer', () => svc.ui.openComputer(), [monitor], 2.2);
     const cp = L(-0.15, 1.0, -4.6);
@@ -306,11 +367,12 @@ export class StarterHouse {
     svc.interaction.register(computer);
 
     // Bed: sleep.
-    const bedHl = ownMaterial(new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.05, 1.93), mats.linen as THREE.MeshStandardMaterial));
-    bedHl.position.copy(L(-5.0, 0.64, -3.875));
+    const bedHl = ownMaterial(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.6), mats.linen as THREE.MeshStandardMaterial));
+    bedHl.position.copy(L(-5.0, 0.56, -3.35));
+    bedHl.visible = true;
     this.group.add(bedHl);
     const bed = new SimpleInteractable('bed', () => 'Sleep', () => svc.ui.openSleep(), [bedHl], 2.4);
-    const bp = L(-5.0, 0.55, -3.875);
+    const bp = L(-5.0, 0.6, -3.85);
     const bedCol = svc.physics.box(bp.x, bp.y, bp.z, 0.8, 0.12, 0.98);
     bedCol.setSensor(true);
     svc.physics.tag(bedCol, { interactable: bed });

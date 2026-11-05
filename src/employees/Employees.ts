@@ -281,7 +281,8 @@ export class Employees {
                 }
                 const fine = st.remove('glitter', 1);
                 const { variant } = this.svc.variants.get('dreamdust', ['dreamy'], fine ? 1 : 0, this.svc.time.day);
-                k.start({ remaining: 60, total: 60, output: { id: 'prod', qty: 8, v: variant.key }, label: `8 × ${variant.name}` });
+                const qty = this.svc.upgrades.has('kettle2') ? 12 : 8;
+                k.start({ remaining: 60, total: 60, output: { id: 'prod', qty, v: variant.key }, label: `${qty} × ${variant.name}` });
                 this.done(e, true);
               },
             };
@@ -519,7 +520,7 @@ export class Employees {
     }
     e.carry = e.carry.filter((c) => c.qty > 0);
     if (need > 0) return;
-    const cut = Math.round(sale.price * 0.2);
+    const cut = Math.round(sale.price * (this.svc.upgrades.has('dealer') ? 0.12 : 0.2));
     this.svc.economy.earn(sale.price - cut, `${e.data.name} sold ${sale.units} × ${FAMILIES[sale.family].name}`, true, sale.units);
     e.data.earned += sale.price - cut;
     this.done(e, true);

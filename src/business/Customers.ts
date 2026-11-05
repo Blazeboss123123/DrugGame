@@ -586,7 +586,7 @@ export class Customers {
     if (this.nextDealAt === 0) this.nextDealAt = now + 30;
     if (this.customers.length && now >= this.nextDealAt) {
       this.newDeal();
-      this.nextDealAt = now + this.rng.range(40, 100) / Math.min(3, 1 + this.customers.length * 0.15);
+      this.nextDealAt = now + (this.rng.range(40, 100) / Math.min(3, 1 + this.customers.length * 0.15)) * (this.svc.upgrades?.has('burner') ? 0.6 : 1);
     }
     for (const d of this.deals) {
       if ((d.status === 'offered' || d.status === 'accepted') && now > d.expires) {

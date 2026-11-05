@@ -10,6 +10,9 @@ export interface Interactable {
   readonly highlight: THREE.Mesh[];
   readonly maxDistance?: number;
   update?(dt: number): void;
+  /** Optional second action on F (e.g. pick up equipment to move it). */
+  secondaryPrompt?(): string | null;
+  secondary?(): void;
 }
 
 const HIGHLIGHT = new THREE.Color(0xf2a23a);

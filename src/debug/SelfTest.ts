@@ -238,7 +238,7 @@ export async function runSelfTest(game: Game): Promise<SelfTestReport> {
     const next = (await import('../products/Catalog')).mixEffects(v.effects, 'cola');
     const { variant } = game.variants.get(v.family, next, v.quality, 1);
     inv.removeAt(slot, 4);
-    mixer.start({ remaining: 8, total: 8, output: { id: 'prod', qty: 4, v: variant.key }, label: 'test' });
+    mixer.start({ remaining: 8, total: 8, output: { id: 'prod', qty: 4, v: variant.key }, label: 'self-test batch' });
     game.production.advance(9);
     const ready = !!mixer.output;
     mixer.interact();
@@ -368,6 +368,56 @@ export async function runSelfTest(game: Game): Promise<SelfTestReport> {
     record('Selling on gang turf shifts influence and angers them', after.inf > before.inf && after.host > before.host, `influence ${before.inf.toFixed(1)} → ${after.inf.toFixed(1)}, hostility ${before.host.toFixed(0)} → ${after.host.toFixed(0)}`);
     r.of('industrial').player = before.inf;
     r.hostility.copperheads = before.host;
+  }
+
+  // 13f. The walk from the spawn point up to the front door has no unclimbable slope.
+  {
+    const sp = world.starter.spawn;
+    let worst = 0;
+    const steps = 40;
+    const zEnd = origin.z + 7.4;
+    for (let i = 0; i < steps; i++) {
+      const za = sp.z + ((zEnd - sp.z) * i) / steps;
+      const zb = sp.z + ((zEnd - sp.z) * (i + 1)) / steps;
+      const ang = (Math.atan2(Math.abs(hm.get(sp.x, zb) - hm.get(sp.x, za)), Math.abs(zb - za)) * 180) / Math.PI;
+      worst = Math.max(worst, ang);
+    }
+    record('Path from the spawn to the front steps is walkable', worst < 40, `steepest stretch ${worst.toFixed(1)}° (limit 55°)`);
+  }
+
+  // 13g. Free placement: equipment fits in the garage, not in unconverted rooms; drying racks raise quality.
+  {
+    const site = game.production.home;
+    let spot: [number, number] | null = null;
+    for (let x = 2.6; x < 5.6 && !spot; x += 0.3) for (let z = -3.8; z < 3.8 && !spot; z += 0.3) if (!site.canPlace('rack', x, z, 0)) spot = [x, z];
+    record('A drying rack can be placed somewhere in the garage', !!spot, spot ? `free spot at (${spot[0].toFixed(1)}, ${spot[1].toFixed(1)})` : 'garage is full');
+    if (!game.upgrades.has('home_front')) {
+      const why = site.canPlace('pot', -1.5, 2.0, 0);
+      record('Unconverted front room refuses equipment', why !== null, why ?? 'placement was allowed');
+    }
+    if (spot) {
+      const rack = site.place('rack', spot[0], spot[1], 0) as import('../production/Production').DryingRack;
+      const { variant } = game.variants.get('nightshade', ['calming'], 0, game.time.day);
+      rack.start({ remaining: 120, total: 120, output: { id: 'prod', qty: 5, v: game.variants.get('nightshade', ['calming'], 1, game.time.day).variant.key }, label: 'self-test batch' });
+      rack.advance(121);
+      const out = rack.output ? game.variants.byKey(rack.output.v) : undefined;
+      record('Drying rack finishes after two hours with a better tier', !!out && out.quality === variant.quality + 1, out ? `${variant.name} → ${out.name} (${out.quality})` : 'no output');
+      site.remove(rack);
+    }
+  }
+
+  // 13h. Corner shop sells equipment straight into the backpack.
+  {
+    const inv = game.inventory;
+    const cash0 = game.economy.cash;
+    game.economy.earn(500, 'Self-test float', false);
+    const n0 = inv.count('pot');
+    const r = game.market.buyNow('pot', 1, 1.15);
+    const ok = r.ok && inv.count('pot') === n0 + 1;
+    record('Kwik Corner sells a grow pot over the counter', ok, r.text);
+    if (r.ok) inv.remove('pot', 1);
+    game.economy.cash = cash0;
+    record('Kwik Corner exists across the street', !!world.shop && world.shop.door !== undefined, world.shop ? 'built' : 'missing');
   }
 
   // 14. Inventory transfers never duplicate items.

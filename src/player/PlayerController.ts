@@ -59,8 +59,8 @@ export class PlayerController {
     this.ctrl.setUp({ x: 0, y: 1, z: 0 });
     this.ctrl.enableAutostep(0.42, 0.18, false);
     this.ctrl.enableSnapToGround(0.45);
-    this.ctrl.setMaxSlopeClimbAngle((52 * Math.PI) / 180);
-    this.ctrl.setMinSlopeSlideAngle((58 * Math.PI) / 180);
+    this.ctrl.setMaxSlopeClimbAngle((55 * Math.PI) / 180);
+    this.ctrl.setMinSlopeSlideAngle((60 * Math.PI) / 180);
     (this.ctrl as unknown as { setSlideEnabled?: (v: boolean) => void }).setSlideEnabled?.(true);
     const deck = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.03, 0.84), new THREE.MeshStandardMaterial({ color: 0xc23a2a, roughness: 0.6 }));
     deck.position.y = 0.1;

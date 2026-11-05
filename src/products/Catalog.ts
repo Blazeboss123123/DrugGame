@@ -112,11 +112,14 @@ def({ id: 'prod', name: 'Product', kind: 'product', stack: 40, price: 0, color: 
 def({ id: 'pkg_bag', name: 'Baggie', kind: 'packaged', stack: 20, price: 0, color: '#6d4f9e', shape: 'baggie', desc: '1 unit, ready to sell.' });
 def({ id: 'pkg_jar', name: 'Jar', kind: 'packaged', stack: 10, price: 0, color: '#6d4f9e', shape: 'jar', desc: '5 units, ready to sell.' });
 // Equipment and gear (installed in the garage / given to the player).
-def({ id: 'pot', name: 'Grow pot', kind: 'equipment', stack: 1, price: 120, color: '#a4553a', shape: 'box', desc: 'An extra grow pot, installed at the delivery property.' });
-def({ id: 'mixer', name: 'Mixing station', kind: 'equipment', stack: 1, price: 650, color: '#2f6b7a', shape: 'box', desc: 'Another mixing station for the delivery property.' });
-def({ id: 'packager', name: 'Packaging bench', kind: 'equipment', stack: 1, price: 400, color: '#8a6a4a', shape: 'box', desc: 'Another packaging bench for the delivery property.' });
-def({ id: 'kettle', name: 'Dreamdust kettle', kind: 'equipment', stack: 1, price: 900, color: '#3d4a57', shape: 'box', desc: 'Brews Moonsalt and Starwater into Dreamdust.', unlock: { lifetimeRevenue: 2000 } });
-def({ id: 'press', name: 'Neon press', kind: 'equipment', stack: 1, price: 1600, color: '#2f6b7a', shape: 'box', desc: 'Presses resin into Neon tablets.', unlock: { lifetimeRevenue: 5000 } });
+def({ id: 'pot', name: 'Grow pot', kind: 'equipment', stack: 10, price: 120, color: '#a4553a', shape: 'box', desc: 'Hold it and press E to place it anywhere in your workspace.' });
+def({ id: 'mixer', name: 'Mixing station', kind: 'equipment', stack: 2, price: 650, color: '#2f6b7a', shape: 'box', desc: 'Combines product with mixers. Place it anywhere in your workspace.' });
+def({ id: 'packager', name: 'Packaging bench', kind: 'equipment', stack: 2, price: 400, color: '#8a6a4a', shape: 'box', desc: 'Packs loose product into baggies and jars. Place it anywhere in your workspace.' });
+def({ id: 'rack', name: 'Drying rack', kind: 'equipment', stack: 2, price: 500, color: '#c9b48a', shape: 'box', desc: 'Dries loose product for two hours: +1 quality tier (up to Premium).', unlock: { lifetimeRevenue: 400 } });
+def({ id: 'lamp', name: 'Grow lamp', kind: 'equipment', stack: 5, price: 350, color: '#c070ff', shape: 'box', desc: 'Pots within 2.5 m grow 60% faster under it.' });
+def({ id: 'storage', name: 'Storage rack', kind: 'equipment', stack: 2, price: 300, color: '#6d7378', shape: 'box', desc: 'Extra 12-slot storage you can place anywhere.' });
+def({ id: 'kettle', name: 'Dreamdust kettle', kind: 'equipment', stack: 2, price: 900, color: '#3d4a57', shape: 'box', desc: 'Brews Moonsalt and Starwater into Dreamdust.', unlock: { lifetimeRevenue: 2000 } });
+def({ id: 'press', name: 'Neon press', kind: 'equipment', stack: 2, price: 1600, color: '#2f6b7a', shape: 'box', desc: 'Presses resin into Neon tablets.', unlock: { lifetimeRevenue: 5000 } });
 def({ id: 'skateboard', name: 'Skateboard', kind: 'tool', stack: 1, price: 75, color: '#c23a2a', shape: 'board', desc: 'Press R to hop on and off. Push with W, brake with S.' });
 
 export const unitsOf = (itemId: string) => (itemId === 'pkg_jar' ? 5 : itemId === 'pkg_bag' || itemId === 'prod' ? 1 : 0);

@@ -46,6 +46,8 @@ export const BAY: Record<FacadeStyle, { w: number; h: number }> = {
 export interface FacadeTextures {
   map: THREE.CanvasTexture;
   emissive: THREE.CanvasTexture;
+  /** Green = roughness, blue = metalness. Windows are smooth and mirror-like so they reflect the sky. */
+  orm: THREE.CanvasTexture;
 }
 
 export function facadeTexture(style: FacadeStyle, seed: number): FacadeTextures {
@@ -56,6 +58,14 @@ export function facadeTexture(style: FacadeStyle, seed: number): FacadeTextures 
   const [ec, eg] = canvas(S, S);
   eg.fillStyle = '#000';
   eg.fillRect(0, 0, S, S);
+  const [oc, og] = canvas(S, S);
+  const baseRough = style === 'corrugated' ? 'rgb(255,150,120)' : style === 'glass' ? 'rgb(255,120,60)' : 'rgb(255,235,0)';
+  og.fillStyle = baseRough;
+  og.fillRect(0, 0, S, S);
+  const glassORM = (x: number, y: number, w: number, h: number) => {
+    og.fillStyle = 'rgb(255,18,190)';
+    og.fillRect(x, y, w, h);
+  };
   const lit = () => rng.chance(style === 'glass' ? 0.3 : 0.42);
   const warm = () => rng.pick(['#ffd79a', '#ffe2b0', '#fff1d6', '#ffcf8a', '#d8e6ff']);
 
@@ -69,6 +79,7 @@ export function facadeTexture(style: FacadeStyle, seed: number): FacadeTextures 
     grad.addColorStop(1, shade(glass, -0.25));
     g.fillStyle = grad;
     g.fillRect(px, py, w, h);
+    glassORM(px, py, w, h);
     // Sky reflection streak.
     g.fillStyle = 'rgba(255,255,255,0.12)';
     g.beginPath();
@@ -195,6 +206,7 @@ export function facadeTexture(style: FacadeStyle, seed: number): FacadeTextures 
           grad.addColorStop(1, '#2d3a44');
           g.fillStyle = grad;
           g.fillRect(px + 6, py + 30, B - 12, B - 40);
+          glassORM(px + 6, py + 30, B - 12, B - 40);
           g.fillStyle = '#1f1c19';
           g.fillRect(px + 6, py + 64, B - 12, 3);
           eg.fillStyle = rng.chance(0.75) ? '#ffe3b5' : '#000';
@@ -213,7 +225,8 @@ export function facadeTexture(style: FacadeStyle, seed: number): FacadeTextures 
       break;
     }
   }
-  return { map: tex(c), emissive: tex(ec) };
+  const orm = tex(oc, false);
+  return { map: tex(c), emissive: tex(ec), orm };
 }
 
 function shade(hex: string, amt: number): string {

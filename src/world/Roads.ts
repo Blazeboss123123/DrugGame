@@ -223,10 +223,50 @@ function river(hm: Heightmap): THREE.Mesh {
     const x = riverX(z) - W + (2 * W * c) / 4;
     return [x, riverBed(z) + 1.25, z, c / 4, z / 20];
   });
-  const mat = new THREE.MeshStandardMaterial({ color: 0x2e4a52, roughness: 0.08, metalness: 0.35, transparent: true, opacity: 0.86 });
+  const mat = new THREE.MeshStandardMaterial({ color: 0x1f3a42, roughness: 0.06, metalness: 0.25, transparent: true, opacity: 0.9, normalMap: waterNormals, normalScale: new THREE.Vector2(0.35, 0.35), envMapIntensity: 1.4 });
   const m = g.mesh(mat, false)!;
   m.receiveShadow = true;
   m.name = 'river';
   void hm;
   return m;
 }
+
+/** Tiling ripple normal map for the river, scrolled every frame by the world. */
+export const waterNormals: THREE.CanvasTexture = (() => {
+  const S = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const h = new Float32Array(S * S);
+  // Sum of tiling sine waves gives a seamless height field.
+  const waves = [
+    [1, 2, 0.6],
+    [3, -1, 0.35],
+    [-2, 4, 0.25],
+    [5, 3, 0.15],
+    [-6, -5, 0.1],
+  ];
+  for (let y = 0; y < S; y++)
+    for (let x = 0; x < S; x++) {
+      let v = 0;
+      for (const [a, b, amp] of waves) v += amp * Math.sin(((a * x + b * y) / S) * Math.PI * 2 + a);
+      h[y * S + x] = v;
+    }
+  const img = g.createImageData(S, S);
+  for (let y = 0; y < S; y++)
+    for (let x = 0; x < S; x++) {
+      const dx = h[y * S + ((x + 1) % S)] - h[y * S + ((x - 1 + S) % S)];
+      const dy = h[((y + 1) % S) * S + x] - h[((y - 1 + S) % S) * S + x];
+      const n = new THREE.Vector3(-dx, -dy, 1).normalize();
+      const i = (y * S + x) * 4;
+      img.data[i] = (n.x * 0.5 + 0.5) * 255;
+      img.data[i + 1] = (n.y * 0.5 + 0.5) * 255;
+      img.data[i + 2] = (n.z * 0.5 + 0.5) * 255;
+      img.data[i + 3] = 255;
+    }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3, 40);
+  return t;
+})();

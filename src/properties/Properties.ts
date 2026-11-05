@@ -32,6 +32,11 @@ const LAYOUTS: Record<string, SiteLayout> = {
     press: [],
     rest: [0.5, -2.2],
     storage: [4.2, -5.2],
+    zones: [{ x0: -6.85, z0: -5.85, x1: 6.85, z1: -1.6 }],
+    keepClear: [
+      { x0: -0.8, z0: -2.7, x1: 0.9, z1: -1.2 },
+      { x0: 2.9, z0: -5.6, x1: 5.5, z1: -4.6 },
+    ],
   },
   barn: {
     pots: [
@@ -52,6 +57,12 @@ const LAYOUTS: Record<string, SiteLayout> = {
     press: [],
     rest: [0, 0],
     storage: [7.2, -6.1],
+    zones: [{ x0: -9.85, z0: -6.85, x1: 9.85, z1: 6.4 }],
+    keepClear: [
+      { x0: -2.5, z0: 4.4, x1: 2.5, z1: 7 },
+      { x0: 2.0, z0: 5.0, x1: 6.4, z1: 7 },
+      { x0: 5.9, z0: -6.9, x1: 8.5, z1: -5.5 },
+    ],
   },
   warehouse: {
     pots: [-9.6, -8.4, -7.2, -6.0].flatMap((x) => [-6.6, -5.4, -4.2].map((z) => [x, z] as [number, number])),
@@ -73,6 +84,12 @@ const LAYOUTS: Record<string, SiteLayout> = {
     ],
     rest: [0, 2],
     storage: [9.3, -8.3],
+    zones: [{ x0: -11.85, z0: -8.85, x1: 11.85, z1: 8.4 }],
+    keepClear: [
+      { x0: -2.8, z0: 6.4, x1: 2.8, z1: 9 },
+      { x0: 2.8, z0: 7.2, x1: 7.4, z1: 9 },
+      { x0: 8.0, z0: -9, x1: 10.6, z1: -7.6 },
+    ],
   },
 };
 

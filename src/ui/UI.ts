@@ -318,30 +318,42 @@ export class UI {
     slider('set-fov', 'Field of view', 60, 100, 1, () => st.fov, (v) => (st.fov = v), (v) => `${v}°`);
     slider('set-view', 'View distance', 250, 900, 25, () => st.viewDistance, (v) => (st.viewDistance = v), (v) => `${v} m`);
     slider('set-scale', 'Render scale', 0.5, 1, 0.05, () => st.renderScale, (v) => (st.renderScale = v), pct);
-    {
+    const select = (id: string, label: string, options: [string, string][], get: () => string, set: (v: string) => void) => {
       const row = el('div', 'setting');
-      const lab = el('label', undefined, 'Shadows');
-      lab.htmlFor = 'set-shadows';
+      const lab = el('label', undefined, label);
+      lab.htmlFor = id;
       const sel = el('select');
-      sel.id = 'set-shadows';
-      for (const [v, t] of [
-        ['high', 'High'],
-        ['low', 'Low'],
-        ['off', 'Off'],
-      ]) {
+      sel.id = id;
+      for (const [v, t] of options) {
         const op = el('option', undefined, t);
         op.value = v;
         sel.appendChild(op);
       }
-      sel.value = st.shadows;
+      sel.value = get();
       sel.addEventListener('change', () => {
-        st.shadows = sel.value as Settings['shadows'];
+        set(sel.value);
         saveSettings(st);
         this.host.applySettings();
       });
       row.append(lab, sel);
       grid.appendChild(row);
-    }
+    };
+    select('set-gfx', 'Graphics', [
+      ['ultra', 'Ultra (bloom, reflections, grading)'],
+      ['high', 'High (bloom, reflections)'],
+      ['low', 'Low (fastest)'],
+    ], () => st.graphics, (v) => (st.graphics = v as Settings['graphics']));
+    select('set-shadows', 'Shadows', [
+      ['high', 'High'],
+      ['low', 'Low'],
+      ['off', 'Off'],
+    ], () => st.shadows, (v) => (st.shadows = v as Settings['shadows']));
+    select('set-day', 'Day length', [
+      ['24', '24 minutes'],
+      ['48', '48 minutes'],
+      ['120', '2 hours'],
+      ['real', 'Real time (synced to your clock)'],
+    ], () => String(st.dayLength), (v) => (st.dayLength = v === 'real' ? 'real' : (Number(v) as 24 | 48 | 120)));
     check('set-fps', 'Show frame rate', () => st.showFps, (v) => (st.showFps = v));
     grid.appendChild(el('div', 'section-label', 'Audio'));
     slider('set-master', 'Master volume', 0, 1, 0.05, () => st.master, (v) => (st.master = v), pct);

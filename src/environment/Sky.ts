@@ -19,6 +19,17 @@ export class Sky {
   private warm = new THREE.Color(0xffa45c);
   private white = new THREE.Color(0xfff3e2);
   private moon = new THREE.Color(0x8fa6d6);
+  /** 0..1 golden-hour amount, for colour grading. */
+  dusk = 0;
+  // Reflections: a small copy of the sky is rendered into an environment map every few seconds.
+  private envSky = new SkyShader();
+  private envScene = new THREE.Scene();
+  private pmrem: THREE.PMREMGenerator;
+  private envRT: THREE.WebGLRenderTarget | null = null;
+  private envTimer = 0;
+  private lastEnvSun = new THREE.Vector3(0, -1, 0);
+  private stars: THREE.Points;
+  private moonMesh: THREE.Mesh;
 
   constructor(
     private scene: THREE.Scene,
@@ -45,6 +56,58 @@ export class Sky {
     this.applyShadowQuality();
     scene.add(this.sun, this.sun.target, this.hemi);
     scene.fog = this.fog;
+    // Environment map source: same shader, small enough for the cube camera.
+    this.envSky.scale.setScalar(50);
+    this.envScene.add(this.envSky);
+    this.envScene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0));
+    this.pmrem = new THREE.PMREMGenerator(renderer);
+    // Stars and moon for the night sky.
+    const n = 2200;
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const u = Math.random() * 2 - 1;
+      const th = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(1 - u * u);
+      const y = Math.abs(u) * 0.95 + 0.05;
+      pos.set([r * Math.cos(th) * 1500, y * 1500, r * Math.sin(th) * 1500], i * 3);
+      const b = 0.5 + Math.random() * 0.5;
+      const tint = Math.random();
+      col.set([b * (tint > 0.8 ? 1 : 0.85), b * 0.9, b * (tint < 0.2 ? 0.75 : 1)], i * 3);
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    this.stars = new THREE.Points(sg, new THREE.PointsMaterial({ size: 2.2, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+    this.stars.frustumCulled = false;
+    this.stars.renderOrder = -1;
+    scene.add(this.stars);
+    this.moonMesh = new THREE.Mesh(new THREE.CircleGeometry(28, 32), new THREE.MeshBasicMaterial({ color: 0xe8ecf5, fog: false, transparent: true, opacity: 0 }));
+    scene.add(this.moonMesh);
+  }
+
+  /** Re-renders the reflection environment when the sun has moved noticeably. */
+  private updateEnv(dt: number) {
+    if (this.settings.graphics === 'low') {
+      if (this.scene.environment) this.scene.environment = null;
+      return;
+    }
+    this.envTimer -= dt;
+    if (this.envTimer > 0 && this.lastEnvSun.angleTo(this.dir) < 0.03 && this.envRT) return;
+    this.envTimer = 6;
+    this.lastEnvSun.copy(this.dir);
+    const src = this.sky.material.uniforms;
+    const dst = this.envSky.material.uniforms;
+    for (const k of ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG']) dst[k].value = src[k].value;
+    dst.sunPosition.value.copy(this.dir);
+    // At night the sky shader is black; fill the environment with a dim blue instead.
+    this.envScene.background = this.night > 0.6 ? new THREE.Color(0x0b1220) : null;
+    this.envSky.visible = this.night <= 0.6;
+    const old = this.envRT;
+    this.envRT = this.pmrem.fromScene(this.envScene, 0.02, 0.1, 200);
+    this.scene.environment = this.envRT.texture;
+    this.scene.environmentIntensity = 0.35 + (1 - this.night) * 0.75;
+    old?.dispose();
   }
 
   applyShadowQuality(): void {
@@ -59,7 +122,7 @@ export class Sky {
     }
   }
 
-  update(time: TimeOfDay, focus: THREE.Vector3, indoors: number): void {
+  update(time: TimeOfDay, focus: THREE.Vector3, indoors: number, dt = 0.016, camera?: THREE.Camera): void {
     const { elevation, azimuth } = time.sun();
     this.dir.set(Math.sin(azimuth) * Math.cos(elevation), Math.sin(elevation), -Math.cos(azimuth) * Math.cos(elevation));
     this.sky.material.uniforms.sunPosition.value.copy(this.dir);
@@ -67,6 +130,16 @@ export class Sky {
     const day = smoothstep(-0.1, 0.22, se);
     this.night = 1 - smoothstep(-0.12, 0.08, se);
     const dusk = smoothstep(0.35, 0.02, Math.abs(se)) * (1 - this.night * 0.6);
+    this.dusk = dusk;
+    const cam = camera?.position ?? focus;
+    this.stars.position.copy(cam);
+    (this.stars.material as THREE.PointsMaterial).opacity = this.night * (1 - indoors) * 0.95;
+    this.stars.rotation.y = time.minutes * 0.0004;
+    const moonDir = this.dir.clone().multiplyScalar(-1).setY(Math.max(0.15, -this.dir.y)).normalize();
+    this.moonMesh.position.copy(cam).addScaledVector(moonDir, 1400);
+    this.moonMesh.lookAt(cam);
+    (this.moonMesh.material as THREE.MeshBasicMaterial).opacity = this.night;
+    this.updateEnv(dt);
 
     // Directional light: sun by day, a dim moon (opposite side) by night.
     const lightDir = se > -0.02 ? this.dir : this.dir.clone().multiplyScalar(-1).setY(0.6).normalize();

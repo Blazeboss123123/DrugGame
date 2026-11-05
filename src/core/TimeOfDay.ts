@@ -6,6 +6,20 @@ export class TimeOfDay {
   minutes = 8 * 60 + 40;
   speed = 1;
 
+  /** Sets speed from a day length in real minutes ('real' = one game minute per real minute). */
+  setDayLength(len: number | 'real') {
+    if (len === 'real') {
+      if (this.speed !== 1 / 60) this.syncToClock();
+      this.speed = 1 / 60;
+    } else this.speed = 1440 / (len * 60);
+  }
+
+  /** Real-time mode: jump the in-game clock to the local wall-clock time (same day number). */
+  syncToClock() {
+    const now = new Date();
+    this.minutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  }
+
   update(dt: number): void {
     this.minutes += dt * this.speed;
     while (this.minutes >= 1440) {

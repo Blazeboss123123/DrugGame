@@ -123,8 +123,10 @@ export function buildBuildings(specs: BuildingSpec[], physics: Physics): Buildin
       emissive: new THREE.Color(0xffffff),
       emissiveIntensity: 0,
       vertexColors: true,
-      roughness: style === 'glass' ? 0.35 : style === 'corrugated' ? 0.55 : 0.85,
-      metalness: style === 'glass' ? 0.35 : style === 'corrugated' ? 0.4 : 0,
+      roughnessMap: t.orm,
+      metalnessMap: t.orm,
+      roughness: 1,
+      metalness: 1,
     });
     nightMaterials.push(mat);
     group.add(batch.mesh(mat)!);

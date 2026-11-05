@@ -29,13 +29,7 @@ export class Market {
   /** Why an item can't be ordered to a site right now, or null. */
   canBuy(id: string, site = 'home'): string | null {
     if (!this.unlocked(id)) return `Unlocks at $${ITEMS[id].unlock!.lifetimeRevenue.toLocaleString()} lifetime sales`;
-    if (ITEMS[id].kind === 'equipment') {
-      const s = this.svc.production.sites.get(site);
-      if (!s) return 'Unknown property';
-      const pending = this.pending.filter((d) => d.site === site).reduce((n, d) => n + d.items.filter((i) => i.id === id).reduce((a, b) => a + b.qty, 0), 0);
-      const inCart = 0;
-      if (s.count(id) + pending + inCart >= s.capacity(id)) return s.capacity(id) ? 'No free space for this at that property' : 'Doesn\u2019t fit at that property';
-    }
+    if (!this.svc.production.sites.get(site)) return 'Unknown property';
     return null;
   }
 
@@ -47,7 +41,6 @@ export class Market {
     for (const it of items) {
       const reason = this.canBuy(it.id, site);
       if (reason) return { ok: false, text: `${ITEMS[it.id].name}: ${reason}.` };
-      if (ITEMS[it.id].kind === 'equipment' && s.count(it.id) + it.qty > s.capacity(it.id)) return { ok: false, text: `Only ${s.capacity(it.id) - s.count(it.id)} more ${ITEMS[it.id].name} fit there.` };
     }
     const total = items.reduce((sum, it) => sum + ITEMS[it.id].price * it.qty, 0);
     if (!this.svc.economy.spend(total, `Market order #${this.nextId}`)) return { ok: false, text: `You need $${total} (you have $${this.svc.economy.cash}).` };
@@ -66,11 +59,6 @@ export class Market {
       const overflow: string[] = [];
       const site = this.svc.production.sites.get(d.site ?? 'home') ?? this.svc.production.home;
       for (const it of d.items) {
-        if (ITEMS[it.id].kind === 'equipment') {
-          for (let k = 0; k < it.qty; k++) site.install(it.id);
-          this.svc.ui.toast(`${ITEMS[it.id].name} installed at ${site.name}.`, 'good');
-          continue;
-        }
         const left = site.delivery.add(it.id, it.qty);
         if (left > 0) {
           // Delivery box full: the courier leaves the rest on the shelf, or reports it.
@@ -82,6 +70,23 @@ export class Market {
       this.svc.bus.emit('phone:notify', { app: 'market', text: `Order #${d.id} delivered to ${site.id === 'home' ? 'your porch box' : site.name}.` });
       if (overflow.length) this.svc.ui.toast(`No room for ${overflow.join(', ')}. Empty your porch box and shelf.`, 'warn');
     }
+  }
+
+  /**
+   * Over-the-counter purchase (the corner shop): pays and puts the items straight into the backpack.
+   * Returns a message; nothing is charged if the backpack can't hold the full amount.
+   */
+  buyNow(id: string, qty: number, markup = 1): { ok: boolean; text: string } {
+    const def = ITEMS[id];
+    const reason = this.unlocked(id) ? null : `Unlocks at $${def.unlock!.lifetimeRevenue.toLocaleString()} lifetime sales`;
+    if (reason) return { ok: false, text: reason };
+    const inv = this.svc.inventory;
+    if (inv.space(id) < qty) return { ok: false, text: 'Your backpack is full.' };
+    const total = Math.round(def.price * markup) * qty;
+    if (!this.svc.economy.spend(total, `Corner shop: ${qty} × ${def.name}`)) return { ok: false, text: `You need $${total} (you have $${this.svc.economy.cash}).` };
+    inv.add(id, qty);
+    this.svc.audio.play('paper');
+    return { ok: true, text: `Bought ${qty} × ${def.name} for $${total}.${def.kind === 'equipment' ? ' Hold it and press E to place it.' : ''}` };
   }
 
   deliverNow() {
