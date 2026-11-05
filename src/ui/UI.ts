@@ -1,3 +1,4 @@
+import { openWorldMap } from './Minimap';
 import type { EventBus } from '../core/EventBus';
 import type { GameState } from '../core/GameState';
 import { saveSettings, type Settings } from '../core/Settings';
@@ -45,6 +46,7 @@ const CONTROLS: [string[], string][] = [
   [['E'], 'Interact / drive / get out'],
   [['Tab'], 'Inventory'],
   [['M'], 'Phone'],
+  [['N'], 'City map (or click the minimap)'],
   [['1-4', 'Wheel'], 'Hotbar'],
   [['R'], 'Skateboard'],
   [['T'], 'Chat (multiplayer)'],
@@ -95,6 +97,13 @@ export class UI {
     this.panels = new Panels(this, svc);
     this.phone = new Phone(this, svc);
     this.hud.bind(svc);
+    this.hud.onOpenMap = () => this.openMap();
+  }
+
+  /** Full-screen city map (minimap click or N). */
+  openMap() {
+    if (!this.hud.minimap) return;
+    openWorldMap(this.svc, this.hud.minimap.cityMap, this, () => this.hud.heading());
   }
 
   /** Shows a modal panel and releases the mouse. */

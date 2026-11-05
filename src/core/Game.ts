@@ -214,7 +214,7 @@ export class Game implements UIHost {
         this.settings.showFps = !this.settings.showFps;
         saveSettings(this.settings);
       }
-      if (this.mode === 'modal' && !this.chatting && (e.code === 'Tab' || e.code === 'KeyM' || e.code === 'Escape' || e.code === 'Digit5')) {
+      if (this.mode === 'modal' && !this.chatting && (e.code === 'Tab' || e.code === 'KeyM' || e.code === 'KeyN' || e.code === 'Escape' || e.code === 'Digit5')) {
         e.preventDefault();
         this.ui.dismiss();
         setTimeout(() => this.input.endFrame(), 0);
@@ -698,6 +698,7 @@ export class Game implements UIHost {
     if (this.vehicles.driving) {
       if (i.wasPressed('KeyE') || i.wasPressed('KeyF')) this.vehicles.exit();
       else if (i.wasPressed('KeyM')) this.ui.phone.open();
+      else if (i.wasPressed('KeyN')) this.ui.openMap();
       else if (i.wasPressed('Digit5')) this.openCheats();
       else if (i.wasPressed('KeyT')) this.openChat();
       else if (i.wasPressed('KeyH')) this.audio.play('denied', this.vehicles.driving.pos);
@@ -705,6 +706,7 @@ export class Game implements UIHost {
     }
     if (i.wasPressed('Tab')) this.ui.openInventory();
     else if (i.wasPressed('KeyM')) this.ui.phone.open();
+    else if (i.wasPressed('KeyN')) this.ui.openMap();
     else if (i.wasPressed('Digit5')) this.openCheats();
     else if (i.wasPressed('KeyT')) this.openChat();
     else if (i.wasPressed('KeyR') && !this.placement.heldKind()) {

@@ -3,6 +3,7 @@ import type { UIHost } from './UI';
 import type { Services } from '../core/Services';
 import { FAMILIES } from '../products/Catalog';
 import { iconFor, stackName } from './Icons';
+import { Minimap } from './Minimap';
 
 /** On-screen heads-up display: crosshair, prompt, objective, clock, compass, location and toasts. */
 export class HUD {
@@ -36,6 +37,10 @@ export class HUD {
   private chatFeed!: HTMLElement;
   chatInput!: HTMLInputElement;
   waypoint: { x: number; z: number } | null = null;
+  minimap: Minimap | null = null;
+  private chase = false;
+  /** Opens the full-screen map (set by UI). */
+  onOpenMap: () => void = () => {};
   private chatSeen = 0;
   private lastPrompt = '';
   private fpsFrames = 0;
@@ -111,7 +116,8 @@ export class HUD {
         setTimeout(() => f.remove(), 1600);
       }
     });
-    svc.bus.on('police:state', (p) => (this.wanted.hidden = p.state !== 'chase'));
+    svc.bus.on('police:state', (p) => (this.chase = p.state === 'chase'));
+    this.minimap = new Minimap(this.root, svc, () => this.waypoint, () => this.onOpenMap());
     this.renderHotbar();
   }
 
@@ -126,6 +132,13 @@ export class HUD {
     this.hotbar.innerHTML = html;
     const h = svc.inventory.slots[svc.hotbar.selected];
     this.heldName.textContent = h ? stackName(h, svc.variants) : '';
+  }
+
+  /** Direction the player (or their car) faces: 0 = north, clockwise. */
+  heading(): number {
+    const svc = this.svc;
+    if (!svc) return 0;
+    return svc.vehicles.driving ? Math.PI / 2 - svc.vehicles.driving.yaw : -svc.player.yaw;
   }
 
   setWaypoint(x: number, z: number) {
@@ -289,13 +302,17 @@ export class HUD {
         (this.wpEl.querySelector('.wp-arrow') as HTMLElement).style.transform = `rotate(${bearing - heading}rad)`;
         (this.wpEl.querySelector('.wp-text') as HTMLElement).textContent = `${this.waypoint ? 'Waypoint' : 'Deal'} · ${Math.round(dist)} m`;
       }
+      this.minimap?.update(dt, this.heading());
       if (svc.net.online) this.renderChat(svc.net.chat);
       else if (this.chatSeen) {
         this.chatFeed.innerHTML = '';
         this.chatSeen = 0;
       }
+      // The pursuit banner only shows while an officer is actually after you and close by.
       const c = svc.customers.peds?.chasing;
-      if (c) this.wanted.querySelector('.wanted-text')!.textContent = `${c.name} is chasing you · ${Math.round(Math.hypot(c.x - x, c.z - z))} m`;
+      const cd = c ? Math.hypot(c.x - x, c.z - z) : Infinity;
+      this.wanted.hidden = !(this.chase && c && cd < 70);
+      if (c && !this.wanted.hidden) this.wanted.querySelector('.wanted-text')!.textContent = `${c.name} is chasing you · ${Math.round(cd)} m`;
     }
     this.fps.hidden = !this.host.settings.showFps;
     if (this.host.settings.showFps) {

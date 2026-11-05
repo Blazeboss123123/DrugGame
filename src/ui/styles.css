@@ -1037,3 +1037,33 @@ kbd,
 .upg-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 12px; background: rgba(255,255,255,0.05); margin-bottom: 8px; }
 .upg-card.owned { border: 1px solid var(--good); }
 .upg-card .upg-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+
+/* Minimap and city map */
+.hud .minimap { position: absolute; top: 88px; right: 20px; width: 196px; height: 196px; border-radius: 50%; cursor: pointer; pointer-events: auto; box-shadow: 0 6px 22px rgba(0,0,0,0.45), 0 0 0 2px rgba(242,162,58,0.55); }
+.hud .minimap canvas { width: 100%; height: 100%; display: block; border-radius: 50%; }
+.hud .minimap:hover { box-shadow: 0 6px 22px rgba(0,0,0,0.45), 0 0 0 3px var(--sodium, #f2a23a); }
+.hud .minimap-north { position: absolute; top: -2px; left: 50%; transform: translateX(-50%); font: 800 11px var(--mono); color: #111; background: #f2a23a; border-radius: 8px; padding: 0 5px; }
+.hud .minimap-key { position: absolute; right: 2px; bottom: 6px; font: 700 10px var(--mono); color: var(--paper, #eee); background: rgba(14,17,21,0.85); border: 1px solid rgba(255,255,255,0.25); border-radius: 4px; padding: 1px 5px; }
+.hud .notify { right: 230px; }
+@media (max-width: 760px) { .hud .minimap { width: 128px; height: 128px; top: 70px; } }
+.worldmap-overlay { padding: 2vh 2vw; }
+.worldmap { width: min(1500px, 96vw); height: 92vh; display: flex; flex-direction: column; background: rgba(14,17,21,0.96); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; overflow: hidden; }
+.wm-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 18px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.wm-head h2 { margin: 0; }
+.wm-tip { font: 500 12px var(--mono); color: var(--muted, #9a9488); }
+.wm-body { flex: 1; display: flex; min-height: 0; }
+.wm-canvas { flex: 1; position: relative; min-width: 0; cursor: crosshair; }
+.wm-canvas canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.wm-hover { position: absolute; pointer-events: none; padding: 5px 9px; background: rgba(14,17,21,0.92); border: 1px solid rgba(255,255,255,0.18); border-radius: 6px; font-size: 13px; white-space: nowrap; }
+.wm-side { width: 270px; flex: 0 0 270px; display: flex; flex-direction: column; gap: 14px; padding: 14px; border-left: 1px solid rgba(255,255,255,0.08); overflow-y: auto; }
+.wm-order { padding: 9px 10px; margin-top: 8px; border-radius: 8px; background: rgba(255,255,255,0.05); border-left: 3px solid #3ddc84; font-size: 13px; line-height: 1.45; }
+.wm-order.offered { border-left-color: #ffd23f; }
+.wm-order .pbtn { margin-top: 6px; }
+.wm-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; font-size: 12px; }
+.wm-key { display: flex; align-items: center; gap: 6px; }
+.wm-key canvas { width: 22px; height: 22px; }
+@media (max-width: 760px) { .wm-side { display: none; } }
+
+/* The hidden attribute must win over display rules on HUD widgets. */
+.hud [hidden] { display: none !important; }
+.wm-key canvas { width: 22px !important; height: 22px !important; flex: 0 0 22px; }
