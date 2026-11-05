@@ -1,0 +1,27 @@
+{
+  "name": "underworld-empire",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Underworld Empire: a 3D first-person open-world business empire simulator (browser, Three.js + Rapier).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "start": "node server/server.mjs",
+    "serve": "npm run build && node server/server.mjs"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "0.14.0",
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.170.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

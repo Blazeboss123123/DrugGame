@@ -1,0 +1,96 @@
+import * as THREE from 'three';
+import { Sky as SkyShader } from 'three/addons/objects/Sky.js';
+import { lerp, smoothstep } from '../core/math';
+import type { Settings } from '../core/Settings';
+import type { TimeOfDay } from '../core/TimeOfDay';
+
+/** Atmospheric sky, sun/moon light with a player-following shadow frustum, hemisphere fill and fog. */
+export class Sky {
+  readonly sky = new SkyShader();
+  readonly sun = new THREE.DirectionalLight(0xffffff, 3);
+  readonly hemi = new THREE.HemisphereLight(0xbfd4ff, 0x4d4436, 0.9);
+  readonly fog = new THREE.FogExp2(0xb8c4cc, 0.0022);
+  /** 0 = full day, 1 = full night. Drives window glow and street lights. */
+  night = 0;
+  private dir = new THREE.Vector3();
+  private dayFog = new THREE.Color(0xb6c3cc);
+  private duskFog = new THREE.Color(0xc79a7e);
+  private nightFog = new THREE.Color(0x0d1320);
+  private warm = new THREE.Color(0xffa45c);
+  private white = new THREE.Color(0xfff3e2);
+  private moon = new THREE.Color(0x8fa6d6);
+
+  constructor(
+    private scene: THREE.Scene,
+    private renderer: THREE.WebGLRenderer,
+    private settings: Settings,
+  ) {
+    this.sky.scale.setScalar(4500);
+    const u = this.sky.material.uniforms;
+    u.turbidity.value = 5.5;
+    u.rayleigh.value = 1.4;
+    u.mieCoefficient.value = 0.004;
+    u.mieDirectionalG.value = 0.82;
+    scene.add(this.sky);
+    this.sun.castShadow = true;
+    const cam = this.sun.shadow.camera;
+    cam.left = -75;
+    cam.right = 75;
+    cam.top = 75;
+    cam.bottom = -75;
+    cam.near = 1;
+    cam.far = 500;
+    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.normalBias = 0.04;
+    this.applyShadowQuality();
+    scene.add(this.sun, this.sun.target, this.hemi);
+    scene.fog = this.fog;
+  }
+
+  applyShadowQuality(): void {
+    const q = this.settings.shadows;
+    this.renderer.shadowMap.enabled = q !== 'off';
+    this.sun.castShadow = q !== 'off';
+    const size = q === 'high' ? 2048 : 1024;
+    if (this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.mapSize.set(size, size);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null as unknown as THREE.WebGLRenderTarget;
+    }
+  }
+
+  update(time: TimeOfDay, focus: THREE.Vector3, indoors: number): void {
+    const { elevation, azimuth } = time.sun();
+    this.dir.set(Math.sin(azimuth) * Math.cos(elevation), Math.sin(elevation), -Math.cos(azimuth) * Math.cos(elevation));
+    this.sky.material.uniforms.sunPosition.value.copy(this.dir);
+    const se = Math.sin(elevation);
+    const day = smoothstep(-0.1, 0.22, se);
+    this.night = 1 - smoothstep(-0.12, 0.08, se);
+    const dusk = smoothstep(0.35, 0.02, Math.abs(se)) * (1 - this.night * 0.6);
+
+    // Directional light: sun by day, a dim moon (opposite side) by night.
+    const lightDir = se > -0.02 ? this.dir : this.dir.clone().multiplyScalar(-1).setY(0.6).normalize();
+    this.sun.position.copy(focus).addScaledVector(lightDir, 220);
+    this.sun.target.position.set(Math.round(focus.x / 4) * 4, focus.y, Math.round(focus.z / 4) * 4);
+    this.sun.position.x += this.sun.target.position.x - focus.x;
+    this.sun.position.z += this.sun.target.position.z - focus.z;
+    if (se > -0.02) {
+      this.sun.color.copy(this.warm).lerp(this.white, smoothstep(0.02, 0.45, se));
+      this.sun.intensity = lerp(0.2, 3.1, smoothstep(-0.02, 0.3, se));
+    } else {
+      this.sun.color.copy(this.moon);
+      this.sun.intensity = 0.32 * this.night;
+    }
+    this.hemi.intensity = lerp(0.22, 1.05, day) * lerp(1, 0.55, indoors);
+    this.hemi.color.setHSL(0.6, 0.45, lerp(0.35, 0.75, day));
+    this.hemi.groundColor.setHSL(0.09, 0.2, lerp(0.08, 0.3, day));
+
+    const fogC = this.fog.color;
+    fogC.copy(this.nightFog).lerp(this.dayFog, day).lerp(this.duskFog, dusk * 0.55);
+    this.fog.density = 1.6 / Math.max(200, this.settings.viewDistance);
+    this.renderer.toneMappingExposure = lerp(0.7, 0.82, day) + this.night * 0.1;
+    // The sky shader goes black at night; blend in a dark blue scene background through fog colour.
+    (this.sky.material as THREE.ShaderMaterial).visible = this.night < 0.97;
+    this.scene.background = this.night > 0.5 ? this.fog.color.clone().multiplyScalar(0.9) : null;
+  }
+}
