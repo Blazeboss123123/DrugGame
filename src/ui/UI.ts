@@ -47,6 +47,8 @@ const CONTROLS: [string[], string][] = [
   [['Tab'], 'Inventory'],
   [['M'], 'Phone'],
   [['N'], 'City map (or click the minimap)'],
+  [['C'], 'Take the product you are holding'],
+  [['F'], 'Pick up placed equipment / second action'],
   [['1-4', 'Wheel'], 'Hotbar'],
   [['R'], 'Skateboard'],
   [['T'], 'Chat (multiplayer)'],
@@ -135,6 +137,15 @@ export class UI {
   /** Brief camera shake (crashes). */
   shake(amount: number) {
     this.host.onShake?.(amount);
+  }
+
+  /** Brief full-screen flash (taser hits). */
+  flash(color: string) {
+    const f = document.createElement('div');
+    f.className = 'screen-flash';
+    f.style.background = color;
+    this.layer.appendChild(f);
+    setTimeout(() => f.remove(), 700);
   }
 
   busted(text: string) {

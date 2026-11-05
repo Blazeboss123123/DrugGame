@@ -58,7 +58,7 @@ export class CornerShop {
     const g0 = this.hm.get(SHOP.x, SHOP.z - hd - 2) - this.origin.y;
     k.box('concrete', -hw - 0.2, g0 - 0.8, -hd - 0.2, hw + 0.2, 0, hd + 0.2);
     k.box('marble', -hw + 0.1, 0, -hd + 0.1, hw - 0.1, 0.01, hd - 0.1, { collide: false });
-    k.box('roof', -hw - 0.5, H, -hd - 0.9, hw + 0.5, H + 0.35, hd + 0.4);
+    k.box('roof', -hw - 0.5, H, -hd - 0.9, hw + 0.5, H + 0.35, hd + 0.4, { bottom: true });
     // Awning over the shopfront.
     k.box('awning', -hw - 0.3, H - 0.55, -hd - 1.6, hw + 0.3, H - 0.45, -hd - 0.1, { collide: false });
     if (-g0 > 0.05) k.box('concrete', -1.6, g0, -hd - 1.3, 1.6, -0.02, -hd - 0.2);

@@ -7,10 +7,12 @@ import { Economy } from '../economy/Economy';
 import { Market } from '../economy/Market';
 import { Employees } from '../employees/Employees';
 import { PostFX } from '../environment/PostFX';
+import { Substances } from '../player/Substances';
 import { Sky } from '../environment/Sky';
 import { Upgrades, UPGRADES } from '../business/Upgrades';
 import { Placement } from '../production/Placement';
 import { SHOP } from '../properties/CornerShop';
+import { CASINO } from '../properties/Casino';
 import { Particles } from '../fx/Particles';
 import { InteractionSystem } from '../interaction/InteractionSystem';
 import { Container } from '../inventory/Inventory';
@@ -42,6 +44,9 @@ import { TimeOfDay } from './TimeOfDay';
 type Mode = 'loading' | 'title' | 'playing' | 'paused' | 'modal';
 const HOTBAR_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 
+/** Police curfew: 23:00 to 05:00. */
+export const isCurfew = (minutes: number) => minutes >= 23 * 60 || minutes < 5 * 60;
+
 /** Owns the renderer and main loop and wires every system together. */
 export class Game implements UIHost {
   readonly bus = new EventBus();
@@ -63,6 +68,9 @@ export class Game implements UIHost {
   world!: World;
   sky!: Sky;
   postfx!: PostFX;
+  substances!: Substances;
+  private curfewWas: boolean | null = null;
+  private curfewWarned = -1;
   placement!: Placement;
   upgrades!: Upgrades;
   player!: PlayerController;
@@ -141,6 +149,8 @@ export class Game implements UIHost {
     svc.world = this.world;
     this.player = new PlayerController(this.physics, this.camera, this.world.hm, this.bus, this.settings);
     this.player.canBoard = () => this.inventory.count('skateboard') > 0;
+    this.substances = new Substances(svc, this.player, this.postfx);
+    svc.substances = this.substances;
     this.scene.add(this.player.board);
     this.interaction = new InteractionSystem(svc, this.camera);
     this.production = new Production(svc);
@@ -201,6 +211,7 @@ export class Game implements UIHost {
     this.bus.on('player:land', (e) => e.speed > 4 && this.audio.play('land'));
     this.bus.on('player:jump', () => this.audio.play('jump'));
     this.bus.on('interior:change', (e) => (this.indoors = e.inside));
+    this.bus.on('player:jailed', (e) => this.jail(e.hours, e.text));
     this.input.dragLook = true;
     this.input.onLockChange = (locked) => {
       if (!locked && this.mode === 'playing' && !this.chatting) this.pause();
@@ -362,6 +373,7 @@ export class Game implements UIHost {
       .fade('Day ' + (this.time.minutes >= 420 ? this.time.day + 1 : this.time.day), () => {
         const before = this.time.day * 1440 + this.time.minutes;
         this.time.skipTo(7);
+        this.substances.clear();
         const after = this.time.day * 1440 + this.time.minutes;
         for (let m = before; m < after; m += 30) this.advanceMinutes(Math.min(30, after - m));
         this.bus.emit('objective:signal', { id: 'sleep' });
@@ -477,6 +489,7 @@ export class Game implements UIHost {
           { label: 'Garage (inside)', run: () => this.teleportTo(STARTER.house.x + 3.8, STARTER.house.z + 1.5, 0, this.world.starter.floorY + 0.05) },
           ...PROPERTIES.map((p) => ({ label: p.name, run: tp(p.x, p.z + p.d / 2 + 3, 0) })),
           { label: 'Kwik Corner shop', run: tp(SHOP.x, SHOP.z - SHOP.d / 2 - 3, Math.PI) },
+          { label: 'Lucky 7 Casino', run: tp(CASINO.x, CASINO.z - CASINO.d / 2 - 5, Math.PI) },
           { label: 'Meridian Civic Plaza', run: tp(37.5, -30, 0) },
           { label: 'Main St, downtown', run: tp(40, 5.8, -Math.PI / 2) },
           { label: 'Market Row', run: tp(225, 40, 0) },
@@ -654,6 +667,47 @@ export class Game implements UIHost {
     this.ui.panels.openCheats(sections);
   }
 
+  /** Warns before curfew, announces it and its end (once each). */
+  private curfewNotices(m: number, curfew: boolean) {
+    if (this.curfewWas !== null && curfew !== this.curfewWas)
+      this.ui.toast(curfew ? 'Curfew is in force until 05:00. Police will stop and search anyone out on the streets.' : 'Curfew lifted. The streets are yours again.', curfew ? 'warn' : 'good');
+    this.curfewWas = curfew;
+    if (!curfew && m >= 22 * 60 + 30 && this.curfewWarned !== this.time.day) {
+      this.curfewWarned = this.time.day;
+      this.ui.toast('Curfew starts at 23:00. Get indoors or stay out of sight of the police.', 'warn');
+    }
+  }
+
+  /** Busted: time passes in a cell, you're released outside the courthouse on the plaza. */
+  private jail(hours: number, text: string) {
+    if (this.vehicles.driving) this.vehicles.exit();
+    this.substances.clear();
+    this.player.stun = 0;
+    this.mode = 'modal';
+    void this.ui
+      .fade(`Arrested · ${hours} hours in Harlow County Jail`, () => {
+        // In multiplayer only the host's clock moves; guests just serve the time off-screen.
+        if (!this.net.online || this.net.isHost) {
+          const total = hours * 60;
+          for (let done = 0; done < total; done += 30) {
+            const step = Math.min(30, total - done);
+            this.time.minutes += step;
+            while (this.time.minutes >= 1440) {
+              this.time.minutes -= 1440;
+              this.time.day++;
+            }
+            this.advanceMinutes(step);
+          }
+        }
+        this.teleportTo(37.5, -12, Math.PI);
+        this.ui.toast(text, 'warn');
+      })
+      .then(() => {
+        this.mode = 'playing';
+        this.ui.toast('Released. Stay out of trouble.', 'info');
+      });
+  }
+
   private setHour(h: number) {
     const before = this.time.day * 1440 + this.time.minutes;
     this.time.skipTo(h);
@@ -707,7 +761,10 @@ export class Game implements UIHost {
     if (i.wasPressed('Tab')) this.ui.openInventory();
     else if (i.wasPressed('KeyM')) this.ui.phone.open();
     else if (i.wasPressed('KeyN')) this.ui.openMap();
-    else if (i.wasPressed('Digit5')) this.openCheats();
+    else if (i.wasPressed('KeyC')) {
+      const msg = this.substances.take();
+      this.ui.toast(msg, this.substances.high ? 'info' : 'warn');
+    } else if (i.wasPressed('Digit5')) this.openCheats();
     else if (i.wasPressed('KeyT')) this.openChat();
     else if (i.wasPressed('KeyR') && !this.placement.heldKind()) {
       const msg = this.player.toggleBoard();
@@ -755,7 +812,7 @@ export class Game implements UIHost {
       this.camera.position.x += (Math.random() - 0.5) * this.shakeAmt * 0.3;
       this.camera.position.y += (Math.random() - 0.5) * this.shakeAmt * 0.3;
     }
-    const inside = this.properties.siteAt(this.player.position) !== null || this.world.shop?.inside(this.player.position) === true;
+    const inside = this.properties.siteAt(this.player.position) !== null || this.world.shop?.inside(this.player.position) === true || this.world.casino?.inside(this.player.position) === true;
     this.indoors = inside;
     this.indoorBlend += ((this.indoors ? 1 : 0) - this.indoorBlend) * Math.min(1, dt * 3);
     const focus = this.mode === 'title' ? this.camera.position : this.player.position;
@@ -764,7 +821,11 @@ export class Game implements UIHost {
     this.world.update(dt, this.sky.night, this.player.position, this.camera.position);
     const m = this.time.minutes;
     const simDt = playing || this.externalDrive ? dt : 0;
-    this.peds.update(simDt, this.sky.night, m >= 23 * 60 || m < 5 * 60);
+    const curfew = isCurfew(m);
+    this.peds.update(simDt, this.sky.night, curfew);
+    if (playing) this.curfewNotices(m, curfew);
+    this.substances.update(simDt);
+    this.ui.hud.setCurfew(curfew, !curfew && m >= 22 * 60 + 30);
     this.employees.frame(simDt);
     this.particles.update(dt);
     this.production.frame(dt);

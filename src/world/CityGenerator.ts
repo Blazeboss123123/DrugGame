@@ -102,6 +102,8 @@ export const STARTER = {
   plaza: { x0: 10, z0: -65, x1: 65, z1: -10 },
   /** Kwik Corner shop lot, across Larch Street from the house (see properties/CornerShop.ts). */
   shop: { x0: -62, z0: -67, x1: -38, z1: -44 },
+  /** Lucky 7 Casino lot on Main St downtown (see properties/Casino.ts). */
+  casino: { x0: 18, z0: 6, x1: 57, z1: 40 },
 };
 
 const CAR_COLORS = [0x8f2b2b, 0x2b3f63, 0xd7d4cc, 0x1d1f22, 0x5f6a70, 0x30503f, 0x9a7a3c, 0xb6b9bd, 0x6b2f4a, 0x2f6b7a];
@@ -132,7 +134,7 @@ export function generateCity(seed = 1337): CityContent {
     lots: [],
     containers: [],
     parks: [],
-    reserved: [STARTER.lot, STARTER.plaza, STARTER.shop, ...PROPERTY_LOTS],
+    reserved: [STARTER.lot, STARTER.plaza, STARTER.shop, STARTER.casino, ...PROPERTY_LOTS],
     propFree: [
       { x0: -54.5, z0: -86, x1: -47.5, z1: -70 }, // starter driveway approach
       { x0: -59.5, z0: -86, x1: -55.5, z1: -78 }, // starter front path
@@ -377,6 +379,11 @@ export function generateCity(seed = 1337): CityContent {
         tint: [rng.range(0.88, 1), rng.range(0.9, 1), rng.range(0.92, 1)],
         setback: hasSetback ? { w: snap(w * 0.65, bay.w), d: snap(d * 0.65, bay.w), height: rng.int(3, 8) * bay.h } : undefined,
       });
+      // Hand-built lots (the casino) take the space; drop the tower but keep the RNG sequence intact.
+      if (isReserved({ x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2 })) {
+        out.buildings.pop();
+        out.pads.pop();
+      }
     }
     // Street trees in planters along the block edge.
     for (let x = r.x0 + 6; x < r.x1 - 4; x += 14) {

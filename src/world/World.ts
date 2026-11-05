@@ -3,6 +3,7 @@ import type { EventBus } from '../core/EventBus';
 import { nextFrame } from '../core/math';
 import type { Services } from '../core/Services';
 import { CornerShop, SHOP_PAD } from '../properties/CornerShop';
+import { CASINO_PAD, Casino } from '../properties/Casino';
 import type { CharacterPool } from '../npc/Characters';
 import { StarterHouse } from '../properties/StarterHouse';
 import { buildBuildings } from './Buildings';
@@ -30,6 +31,7 @@ export class World {
   content!: CityContent;
   starter!: StarterHouse;
   shop!: CornerShop;
+  casino!: Casino;
   /** Character pool for hand-placed NPCs (the shopkeeper); set by Game before init. */
   chars: CharacterPool | null = null;
   /** Max texture anisotropy of the renderer; set by Game before build. */
@@ -68,9 +70,10 @@ export class World {
     const starterPad: Pad = { ...STARTER.lot, blend: 4, lock: true };
     const plazaPad: Pad = { ...STARTER.plaza, blend: 3, lock: true };
     const shopPad: Pad = { ...SHOP_PAD, blend: 4, lock: true };
+    const casinoPad: Pad = { ...CASINO_PAD, blend: 4, lock: true };
     // Property plots: levelled a little beyond the building so the doors meet flat ground.
     for (const p of PROPERTIES) this.propertyPads.set(p.id, { x0: p.x - p.w / 2 - 2, x1: p.x + p.w / 2 + 2, z0: p.z - p.d / 2 - 2, z1: p.z + p.d / 2 + 6, blend: 6, lock: true });
-    this.hm.applyPads([starterPad, plazaPad, shopPad, ...this.propertyPads.values(), ...this.content.pads]);
+    this.hm.applyPads([starterPad, plazaPad, shopPad, casinoPad, ...this.propertyPads.values(), ...this.content.pads]);
 
     progress(0.38, 'Laying the ground');
     await nextFrame();
@@ -107,6 +110,8 @@ export class World {
     await this.svc.properties.build(this.hm, this.propertyPads);
     this.shop = new CornerShop(this.svc, this.hm, shopPad, this.chars);
     await this.shop.build();
+    this.casino = new Casino(this.svc, this.hm, casinoPad, this.chars);
+    await this.casino.build();
 
     progress(0.86, 'Planting trees and parking cars');
     await nextFrame();
@@ -117,7 +122,7 @@ export class World {
     progress(0.92, 'Growing grass');
     await nextFrame();
     const houseRect = { x0: STARTER.house.x - 6.5, z0: STARTER.house.z - 5.5, x1: STARTER.house.x + 6.5, z1: STARTER.house.z + 7.6 };
-    const mask = buildGrassMask(this.hm, this.grassWeight!, this.content, [STARTER.plaza, shopPad, houseRect, ...this.propertyPads.values()]);
+    const mask = buildGrassMask(this.hm, this.grassWeight!, this.content, [STARTER.plaza, shopPad, casinoPad, houseRect, ...this.propertyPads.values()]);
     this.grassWeight = null;
     this.grass = new GrassField(this.hm, mask, this.surfaces);
     this.grass.setQuality(this.svc.settings.graphics);
@@ -144,6 +149,7 @@ export class World {
     this.props.lightPools.opacity = night * 0.55;
     this.starter.update(night);
     this.shop?.update(dt, night);
+    this.casino?.update(dt);
 
     // Traffic signals: avenue and street alternate (14 s green, 3 s amber).
     this.signalClock = (this.signalClock + dt) % 34;

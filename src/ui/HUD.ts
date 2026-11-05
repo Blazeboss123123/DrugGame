@@ -131,7 +131,8 @@ export class HUD {
     }
     this.hotbar.innerHTML = html;
     const h = svc.inventory.slots[svc.hotbar.selected];
-    this.heldName.textContent = h ? stackName(h, svc.variants) : '';
+    const takeable = h && svc.substances?.canTake(h.id);
+    this.heldName.textContent = h ? `${stackName(h, svc.variants)}${takeable ? '  ·  C to take' : ''}` : '';
   }
 
   /** Direction the player (or their car) faces: 0 = north, clockwise. */
@@ -139,6 +140,22 @@ export class HUD {
     const svc = this.svc;
     if (!svc) return 0;
     return svc.vehicles.driving ? Math.PI / 2 - svc.vehicles.driving.yaw : -svc.player.yaw;
+  }
+
+  /** Red CURFEW badge on the clock while it's in force (amber shortly before). */
+  setCurfew(active: boolean, soon: boolean) {
+    const state = active ? 'on' : soon ? 'soon' : '';
+    if (this.root.dataset.curfew === state) return;
+    this.root.dataset.curfew = state;
+    let b = this.root.querySelector('.curfew-badge') as HTMLElement | null;
+    if (!b) {
+      b = document.createElement('div');
+      b.className = 'curfew-badge';
+      this.root.querySelector('.clock')!.appendChild(b);
+    }
+    b.hidden = !state;
+    b.className = `curfew-badge ${state}`;
+    b.textContent = active ? 'Curfew · until 05:00' : 'Curfew at 23:00';
   }
 
   setWaypoint(x: number, z: number) {

@@ -59,6 +59,8 @@ export class Person implements Interactable {
   nightWalker: boolean;
   lostFor = 0;
   cooldown = 0;
+  /** Seconds until this officer can fire their taser again. */
+  taserCd = 0;
   // Product use and effects.
   useT = -1;
   useColor = 0xffffff;
@@ -118,6 +120,10 @@ export class Pedestrians {
   onCaught?: (by: Person) => void;
   onLost?: (by: Person) => void;
   onSpotted?: (by: Person, reason: string) => void;
+  /** An officer fired a taser; `hit` says whether it connected. */
+  onTased?: (by: Person, hit: boolean) => void;
+  private beam: THREE.Line | null = null;
+  private beamT = 0;
 
   constructor(
     private svc: Services,
@@ -358,6 +364,15 @@ export class Pedestrians {
   }
 
   update(dt: number, night: number, curfew: boolean): void {
+    if (this.beam) {
+      this.beamT -= dt;
+      (this.beam.material as THREE.LineBasicMaterial).opacity = Math.max(0, this.beamT / 0.35);
+      if (this.beamT <= 0) {
+        this.svc.scene.remove(this.beam);
+        this.beam.geometry.dispose();
+        this.beam = null;
+      }
+    }
     const player = this.svc.player.position;
     const rng = this.rng;
     const r = this.renderer;
@@ -433,7 +448,7 @@ export class Pedestrians {
       else if (active) {
         // Police enforce curfew; gangs come after you once they're hostile enough.
         if (!this.chasing && p.cooldown <= 0 && d2 < 16 * 16 && !this.svc.player.hidden) {
-          if (p.police && curfew && this.canSee(p, 16)) {
+          if (p.police && curfew && this.canSee(p, 26)) {
             this.startChase(p, 'curfew');
             continue;
           }
@@ -571,6 +586,25 @@ export class Pedestrians {
     p.yaw += d * Math.min(1, dt * 8);
   }
 
+  /** Taser wires: a crackling line from the officer to you (or past you on a miss). */
+  private fireBeam(p: Person, hit: boolean) {
+    const pl = this.svc.player.position;
+    const from = new THREE.Vector3(p.x, p.y + 1.2, p.z);
+    const to = new THREE.Vector3(pl.x + (hit ? 0 : (Math.random() - 0.5) * 2), pl.y + (hit ? 1.0 : 0.3), pl.z + (hit ? 0 : (Math.random() - 0.5) * 2));
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 12; i++) {
+      const v = from.clone().lerp(to, i / 12);
+      if (i > 0 && i < 12) v.add(new THREE.Vector3((Math.random() - 0.5) * 0.12, (Math.random() - 0.5) * 0.12, (Math.random() - 0.5) * 0.12));
+      pts.push(v);
+    }
+    if (this.beam) this.svc.scene.remove(this.beam);
+    this.beam = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xbfe0ff, transparent: true, opacity: 1 }));
+    this.svc.scene.add(this.beam);
+    this.beamT = 0.35;
+    this.fx.emit(to.x, to.y, to.z, '#cfe3ff', { count: hit ? 26 : 8, speed: 3, up: 0.6, life: 0.35, size: 0.05, grow: 0, spread: 0.2 });
+    this.svc.audio.play('switch', to);
+  }
+
   /** Pursuit with a real character controller, so walls and stairs are respected. */
   private chase(p: Person, dt: number): boolean {
     const pl = this.svc.player.position;
@@ -585,12 +619,24 @@ export class Pedestrians {
     }
     if (!this.svc.vehicles.driving && this.canSee(p, 70)) p.lostFor = 0;
     else p.lostFor += dt;
+    // Police carry tasers: within 11 m and in sight, they fire every few seconds.
+    if (p.police) {
+      p.taserCd -= dt;
+      if (p.taserCd <= 0 && dist < 11 && dist > 1.8 && !this.svc.vehicles.driving && !this.svc.player.hidden && this.svc.player.stun <= 0 && this.canSee(p, 11)) {
+        p.taserCd = 3.5;
+        const hit = Math.random() < (dist < 6 ? 0.8 : 0.55);
+        this.fireBeam(p, hit);
+        if (hit) this.svc.player.stun = 2.4;
+        this.onTased?.(p, hit);
+      }
+    }
     if (p.lostFor > 14 || dist > 85) {
       this.endChase(p, 45);
       this.onLost?.(p);
       return false;
     }
-    const sp = (p.police ? 6.1 : 5.7) * dt;
+    // Officers sprint about as fast as you; gang members are a touch slower.
+    const sp = (p.police ? 7.3 : 6.2) * dt;
     const desired = { x: (dx / dist) * sp, y: -4 * dt, z: (dz / dist) * sp };
     this.ctrl.computeColliderMovement(p.collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, undefined, (c: Collider) => c.handle !== this.svc.player.collider.handle);
     const mv = this.ctrl.computedMovement();

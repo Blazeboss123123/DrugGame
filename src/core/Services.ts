@@ -8,6 +8,7 @@ import type { Properties } from '../properties/Properties';
 import type { Vehicles } from '../vehicles/Vehicles';
 import type { Net } from '../net/Net';
 import type { Settings } from './Settings';
+import type { Substances } from '../player/Substances';
 import type { Economy } from '../economy/Economy';
 import type { Market } from '../economy/Market';
 import type { InteractionSystem } from '../interaction/InteractionSystem';
@@ -48,6 +49,7 @@ export interface Services {
   vehicles: Vehicles;
   net: Net;
   settings: Settings;
+  substances: Substances;
   /** The stack in the selected hotbar slot. */
   held(): Stack | null;
 }

@@ -39,6 +39,17 @@ export class PlayerController {
   rescues = 0;
   /** True while the player is inside a vehicle. */
   hidden = false;
+  /** Seconds left frozen by a police taser. */
+  stun = 0;
+  /** Movement modifiers from substances (1 = normal). */
+  speedMul = 1;
+  jumpMul = 1;
+  gravityMul = 1;
+  /** Extra field of view in degrees, and how much the view drifts and shakes (0..1). */
+  fovAdd = 0;
+  wobble = 0;
+  shake = 0;
+  private wobbleT = 0;
   // Skateboard.
   onBoard = false;
   boardYaw = 0;
@@ -115,7 +126,11 @@ export class PlayerController {
   }
 
   update(dt: number, input: Input, active: boolean): void {
-    const ax = active ? input.axis() : { forward: 0, right: 0, sprint: false, jump: false };
+    let ax = active ? input.axis() : { forward: 0, right: 0, sprint: false, jump: false };
+    if (this.stun > 0) {
+      this.stun = Math.max(0, this.stun - dt);
+      ax = { forward: 0, right: 0, sprint: false, jump: false };
+    }
     const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const hv = new THREE.Vector3(this.velocity.x, 0, this.velocity.z);
@@ -140,7 +155,7 @@ export class PlayerController {
       const wish = fwd.clone().multiplyScalar(ax.forward).add(right.multiplyScalar(ax.right));
       if (wish.lengthSq() > 1) wish.normalize();
       sprinting = ax.sprint && ax.forward > 0 && this.grounded;
-      wish.multiplyScalar(sprinting ? SPRINT : WALK);
+      wish.multiplyScalar((sprinting ? SPRINT : WALK) * this.speedMul);
       const accel = this.grounded ? (wish.lengthSq() > 0 ? 38 : 46) : 9;
       const diff = wish.sub(hv);
       const maxDelta = accel * dt;
@@ -151,12 +166,12 @@ export class PlayerController {
     // Vertical.
     let vy = this.velocity.y;
     if (this.grounded && ax.jump) {
-      vy = JUMP;
+      vy = JUMP * this.jumpMul;
       this.grounded = false;
       this.bus.emit('player:jump', {});
       this.bus.emit('objective:signal', { id: 'jumped' });
     } else {
-      vy -= GRAVITY * dt;
+      vy -= GRAVITY * this.gravityMul * dt;
     }
     if (vy < -45) vy = -45;
 
@@ -231,8 +246,14 @@ export class PlayerController {
       sway = Math.cos(this.bobPhase) * amp * 0.6;
     }
     this.camera.position.set(this.position.x + Math.cos(this.yaw) * sway, this.camY + bob, this.position.z - Math.sin(this.yaw) * sway);
-    this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-    const fov = this.settings.fov + this.fovKick;
+    // Substance wobble (slow drift and roll) and shake (jitter, taser).
+    this.wobbleT += dt;
+    const w = this.wobble;
+    const sh = this.shake + (this.stun > 0 ? 0.6 : 0);
+    const jx = sh ? (Math.random() - 0.5) * 0.02 * sh : 0;
+    const jy = sh ? (Math.random() - 0.5) * 0.02 * sh : 0;
+    this.camera.rotation.set(this.pitch + Math.sin(this.wobbleT * 0.7) * 0.05 * w + jx, this.yaw + Math.sin(this.wobbleT * 0.43) * 0.06 * w + jy, Math.sin(this.wobbleT * 0.9) * 0.09 * w, 'YXZ');
+    const fov = this.settings.fov + this.fovKick + this.fovAdd + Math.sin(this.wobbleT * 1.3) * 4 * w;
     if (Math.abs(this.camera.fov - fov) > 0.01) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();

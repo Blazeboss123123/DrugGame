@@ -160,6 +160,12 @@ export class Customers {
       this.svc.ui.toast(o.police ? 'You lost the police.' : 'You shook them off.', 'good');
     };
     peds.onCaught = (o) => (o.police ? this.arrested(o) : this.shakedown(o));
+    peds.onTased = (o, hit) => {
+      if (hit) {
+        this.svc.ui.flash('#bfe0ff');
+        this.svc.ui.toast(`${o.name} tased you! You can't move.`, 'warn');
+      } else this.svc.ui.toast(`${o.name}'s taser missed. Keep running!`, 'info');
+    };
   }
 
   get absMinutes() {
@@ -542,10 +548,11 @@ export class Customers {
   // ------------------------------------------------------------------ police and gangs
   private arrested(o: Person) {
     const contraband = this.svc.inventory.slots.some((s) => s && (ITEMS[s.id].kind === 'product' || ITEMS[s.id].kind === 'packaged'));
+    const high = this.svc.substances?.inSystem ?? false;
     this.peds.endChase(o, 60);
     this.heat = 'clear';
     this.svc.bus.emit('police:state', { state: 'clear' });
-    if (!contraband) {
+    if (!contraband && !high) {
       this.svc.ui.toast(`${o.name} searched you and found nothing. "Move along."`, 'info');
       return;
     }
@@ -557,8 +564,11 @@ export class Customers {
       }
     });
     this.svc.inventory.changed();
-    const fine = this.svc.economy.forfeit(200 + this.svc.economy.cash * 0.1, `Fine from ${o.name}`);
-    this.svc.ui.busted(`${o.name} searched you. ${units} units confiscated and a $${fine} fine.`);
+    const fine = this.svc.economy.forfeit(150 + this.svc.economy.cash * 0.08, `Fine from ${o.name}`);
+    // Jail time grows with what they found; being high adds a few hours.
+    const hours = Math.min(24, Math.round(4 + units * 0.35 + (high ? 3 : 0)));
+    const found = [units ? `${units} units on you` : '', high ? 'drugs in your system' : ''].filter(Boolean).join(' and ');
+    this.svc.bus.emit('player:jailed', { hours, text: `${o.name} searched you and found ${found}. Everything confiscated, a $${fine} fine and ${hours} hours in Harlow County Jail.` });
   }
 
   private shakedown(o: Person) {

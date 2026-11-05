@@ -14,6 +14,8 @@ export interface GameEvents {
   'money:changed': { cash: number; delta: number };
   'police:state': { state: 'clear' | 'chase' | 'search'; officer?: string };
   'phone:notify': { app: string; text: string };
+  'player:took': { effects: string[] };
+  'player:jailed': { hours: number; text: string };
 }
 
 export type Surface = 'grass' | 'concrete' | 'wood' | 'metal' | 'dirt';

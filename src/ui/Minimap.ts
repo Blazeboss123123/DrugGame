@@ -1,6 +1,7 @@
 import type { Services } from '../core/Services';
 import { PROPERTIES } from '../properties/PropertyDefs';
 import { SHOP } from '../properties/CornerShop';
+import { CASINO } from '../properties/Casino';
 import { FAMILIES } from '../products/Catalog';
 import { NEIGHBOURHOODS } from '../npc/Neighbourhoods';
 import { AVENUES, GRID, RIVER, ROAD, STREETS, WORLD_HALF, X_LINES, Z_LINES, bridgeSpan, districtAt, riverX } from '../world/CityPlan';
@@ -17,7 +18,7 @@ const DISTRICT_COL: Record<string, string> = {
   outskirts: '#2f4528',
 };
 
-export type MarkerKind = 'home' | 'shop' | 'owned' | 'sale' | 'car' | 'request' | 'deal' | 'police' | 'player' | 'waypoint';
+export type MarkerKind = 'home' | 'shop' | 'casino' | 'owned' | 'sale' | 'car' | 'request' | 'deal' | 'police' | 'player' | 'waypoint';
 
 export interface Marker {
   kind: MarkerKind;
@@ -31,6 +32,7 @@ export interface Marker {
 const MARKER_COL: Record<MarkerKind, string> = {
   home: '#f2a23a',
   shop: '#2bb673',
+  casino: '#ffcf3a',
   owned: '#f2a23a',
   sale: '#e0e0e0',
   car: '#9ad0ff',
@@ -46,6 +48,7 @@ export const MARKER_LEGEND: [MarkerKind, string][] = [
   ['deal', 'Accepted deal'],
   ['home', 'Your places'],
   ['shop', 'Kwik Corner'],
+  ['casino', 'Casino'],
   ['sale', 'For sale'],
   ['car', 'Your cars'],
   ['police', 'Police'],
@@ -139,6 +142,8 @@ export class CityMap {
     g.fillRect(X(house.x - 6), X(house.z - 5), 12 * PPM, 10 * PPM);
     g.fillStyle = '#5e8f6a';
     g.fillRect(X(SHOP.x - SHOP.w / 2), X(SHOP.z - SHOP.d / 2), SHOP.w * PPM, SHOP.d * PPM);
+    g.fillStyle = '#6a3a7a';
+    g.fillRect(X(CASINO.x - CASINO.w / 2), X(CASINO.z - CASINO.d / 2), CASINO.w * PPM, CASINO.d * PPM);
     g.fillStyle = '#a49b8c';
     for (const p of PROPERTIES) g.fillRect(X(p.x - p.w / 2), X(p.z - p.d / 2), p.w * PPM, p.d * PPM);
     // Neighbourhoods: soft outline and a big name, so it's clear where each customer lives.
@@ -197,6 +202,7 @@ export function currentMarkers(svc: Services, waypoint: { x: number; z: number }
   const h = svc.world.starter.origin;
   m.push({ kind: 'home', x: h.x, z: h.z, label: '14 Larch Street' });
   m.push({ kind: 'shop', x: SHOP.x, z: SHOP.z, label: 'Kwik Corner' });
+  m.push({ kind: 'casino', x: CASINO.x, z: CASINO.z, label: 'Lucky 7 Casino' });
   for (const p of PROPERTIES) m.push({ kind: svc.properties.owns(p.id) ? 'owned' : 'sale', x: p.x, z: p.z, label: svc.properties.owns(p.id) ? p.name : `${p.name} · for sale` });
   for (const v of svc.vehicles.list) m.push({ kind: 'car', x: v.pos.x, z: v.pos.z, label: v.def.name });
   const pl = svc.player.position;
@@ -261,6 +267,19 @@ export function drawMarker(g: CanvasRenderingContext2D, mk: Marker, x: number, y
       g.fillText(mk.kind === 'request' ? '!' : '$', x, y + 0.5 * s);
       break;
     }
+    case 'casino':
+      g.beginPath();
+      g.arc(x, y, 8 * s, 0, Math.PI * 2);
+      g.fillStyle = '#1a1220';
+      g.fill();
+      g.strokeStyle = col;
+      g.stroke();
+      g.fillStyle = col;
+      g.font = `800 ${11 * s}px Archivo, Arial, sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('7', x, y + 0.5 * s);
+      break;
     case 'waypoint':
       g.beginPath();
       g.arc(x, y, 7 * s, 0, Math.PI * 2);

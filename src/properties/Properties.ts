@@ -203,7 +203,7 @@ export class PropertyBuilding {
     // Slab, floor and roof.
     k.box('concrete', -hw - 0.2, g0 - 0.8, -hd - 0.2, hw + 0.2, 0, hd + 0.2);
     k.box(floorKey, -hw + 0.1, 0, -hd + 0.1, hw - 0.1, 0.01, hd - 0.1, { collide: false });
-    k.box('roof', -hw - 0.4, H, -hd - 0.4, hw + 0.4, H + 0.3, hd + 0.4);
+    k.box('roof', -hw - 0.4, H, -hd - 0.4, hw + 0.4, H + 0.3, hd + 0.4, { bottom: true });
     // Front steps/ramp down to the lot.
     if (-g0 > 0.05) k.box('concrete', -2.6, g0, hd + 0.2, 2.6, -0.02, hd + 1.4);
 

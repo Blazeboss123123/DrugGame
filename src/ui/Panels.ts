@@ -5,6 +5,7 @@ import type { Person } from '../npc/Pedestrians';
 import { EFFECTS, FAMILIES, INGREDIENTS, ITEMS, QUALITY_NAMES, VariantRegistry, mixEffects, unitValue, unitsOf, type Quality } from '../products/Catalog';
 import type { DryingRack, Kettle, MixingStation, NeonPress } from '../production/Production';
 import { iconFor, stackName } from './Icons';
+import { openPackagingBench } from './Packaging';
 import type { UI } from './UI';
 import { DISTRICTS } from '../world/CityPlan';
 
@@ -36,7 +37,7 @@ export class Panels {
     private svc: Services,
   ) {}
 
-  private shell(title: string, eyebrow: string, wide = false): { overlay: HTMLElement; body: HTMLElement; close: () => void } {
+  shell(title: string, eyebrow: string, wide = false): { overlay: HTMLElement; body: HTMLElement; close: () => void } {
     const overlay = el('div', 'overlay');
     const panel = el('div', `panel game-panel${wide ? ' wide' : ''}`);
     const head = el('div', 'panel-head');
@@ -297,62 +298,7 @@ export class Panels {
 
   // ------------------------------------------------------------------ packaging
   openPackager() {
-    const { overlay, body, close } = this.shell('Packaging bench', 'Customers only buy packaged product');
-    const inv = this.svc.inventory;
-    let prodSlot = -1;
-    const list = el('div', 'pick-list');
-    const opts = el('div', 'btn-row');
-    const status = el('p', 'muted');
-    body.append(this.labelled('Loose product', list), opts, status);
-    const render = () => {
-      list.innerHTML = '';
-      inv.slots.forEach((s, i) => {
-        if (!s || s.id !== 'prod') return;
-        list.appendChild(this.pickRow(s, i === prodSlot, () => {
-          prodSlot = i;
-          render();
-        }));
-      });
-      if (!list.children.length) list.innerHTML = '<p class="muted">No loose product to package.</p>';
-      opts.innerHTML = '';
-      const s = inv.slots[prodSlot];
-      for (const [pack, out, per] of [
-        ['baggie', 'pkg_bag', 1],
-        ['jar', 'pkg_jar', 5],
-      ] as const) {
-        const have = inv.count(pack);
-        const n = s ? Math.min(have, Math.floor(s.qty / per)) : 0;
-        const b = el('button', 'btn', `Package ${n || ''} into ${pack === 'baggie' ? 'baggies' : 'jars'} <span class="muted">(${have} ${pack}${have === 1 ? '' : 's'})</span>`);
-        b.disabled = n === 0;
-        b.onclick = () => {
-          const cur = inv.slots[prodSlot];
-          if (!cur) return;
-          const v = cur.v;
-          const can = Math.min(inv.count(pack), Math.floor(cur.qty / per));
-          if (can <= 0) return;
-          // Make sure the packages fit before consuming anything.
-          const space = inv.space(out, v) + (cur.qty === can * per ? ITEMS[out].stack : 0);
-          const k = Math.min(can, space);
-          if (k <= 0) {
-            status.textContent = 'No room in your inventory.';
-            return;
-          }
-          inv.remove(pack, k);
-          inv.removeAt(prodSlot, k * per);
-          inv.add(out, k, v);
-          this.svc.audio.play('place');
-          this.svc.bus.emit('objective:signal', { id: 'package' });
-          status.textContent = `Packaged ${k} ${pack === 'baggie' ? 'baggies' : 'jars'}.`;
-          prodSlot = inv.slots.findIndex((x) => x?.id === 'prod' && x.v === v);
-          render();
-        };
-        opts.appendChild(b);
-      }
-      if (!s) opts.innerHTML = '<p class="muted">Choose a product above. You need baggies (or jars) from the Market.</p>';
-    };
-    render();
-    void close;
-    this.ui.present(overlay);
+    openPackagingBench(this.svc);
   }
 
   // ------------------------------------------------------------------ kettle and press
