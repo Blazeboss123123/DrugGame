@@ -6,6 +6,7 @@ import type { Interactable } from '../interaction/Interactable';
 import { RAPIER, type Collider, type RigidBody } from '../physics/Physics';
 import { EFFECTS } from '../products/Catalog';
 import { GANGS, GANG_IDS, type GangId } from '../business/Rivals';
+import { CORE, NEIGHBOURHOODS, inHood } from './Neighbourhoods';
 import { ROAD, X_LINES, Z_LINES, bridgeSpan, districtAt, inGridX, inGridZ, nearestLine } from '../world/CityPlan';
 import type { Heightmap } from '../world/Heightmap';
 import { HAIRS, HumanoidRenderer, PANTS, SHIRTS, SKINS, type Pose } from './Humanoid';
@@ -69,6 +70,8 @@ export class Person implements Interactable {
   outfit: Outfit = 'Casual_Hoodie';
   look: CharLook = { skin: 0xf1c8a8, hair: 0x1c1612, hue: 0 };
   char: CharacterInstance | null = null;
+  /** Index into NEIGHBOURHOODS for civilians who live somewhere (null for police and gangs). */
+  hood: number | null = null;
   /** Set each frame: this person is among the closest and should use a rigged model. */
   wantChar = false;
   constructor(
@@ -109,6 +112,9 @@ export class Pedestrians {
   private pose: Pose = { x: 0, y: 0, z: 0, yaw: 0, phase: 0, swing: 0 };
   private v = new THREE.Vector3();
   private turfNodes = new Map<GangId, Set<number>>();
+  /** Street-corner nodes in each neighbourhood (index matches NEIGHBOURHOODS), and the police core. */
+  readonly hoodNodes: Set<number>[] = [];
+  private coreNodes = new Set<number>();
   onCaught?: (by: Person) => void;
   onLost?: (by: Person) => void;
   onSpotted?: (by: Person, reason: string) => void;
@@ -164,6 +170,8 @@ export class Pedestrians {
       this.nodes.forEach((n, i) => GANGS[g].turf.includes(districtAt(n.x, n.z)) && set.add(i));
       this.turfNodes.set(g, set);
     }
+    for (const h of NEIGHBOURHOODS) this.hoodNodes.push(new Set(this.nodes.map((n, i) => (inHood(h, n.x, n.z) ? i : -1)).filter((i) => i >= 0)));
+    this.nodes.forEach((n, i) => inHood(CORE, n.x, n.z) && this.coreNodes.add(i));
   }
 
   nearestNode(x: number, z: number): number {
@@ -181,6 +189,8 @@ export class Pedestrians {
 
   private spawn() {
     const rng = this.rng;
+    const hoodRng = new Rng(9091);
+    const total = NEIGHBOURHOODS.reduce((s, h) => s + h.weight, 0);
     const plan: { kind: PersonKind; gang: GangId | null }[] = [];
     for (let i = 0; i < CIVILIANS; i++) plan.push({ kind: 'civ', gang: null });
     for (let i = 0; i < OFFICERS; i++) plan.push({ kind: 'police', gang: null });
@@ -191,6 +201,13 @@ export class Pedestrians {
       const p = new Person(k, `npc-${k}`, name, pl.kind, pl.gang, this.svc, rng);
       const pool = pl.gang ? [...this.turfNodes.get(pl.gang)!] : null;
       p.from = pool?.length ? rng.pick(pool) : rng.int(0, this.nodes.length - 1);
+      // Civilians live in a neighbourhood, police patrol the core (separate RNG keeps names stable).
+      if (pl.kind === 'civ') {
+        let r = hoodRng.next() * total;
+        p.hood = NEIGHBOURHOODS.findIndex((h) => (r -= h.weight) < 0);
+        if (p.hood < 0) p.hood = 0;
+        p.from = hoodRng.pick([...this.hoodNodes[p.hood]]);
+      } else if (pl.kind === 'police') p.from = hoodRng.pick([...this.coreNodes]);
       const n = this.nodes[p.from];
       p.to = n.links[rng.int(0, n.links.length - 1)];
       const t = rng.next();
@@ -442,6 +459,19 @@ export class Pedestrians {
               const turf = this.turfNodes.get(p.gang)!;
               const inTurf = opts.filter((l) => turf.has(l));
               if (inTurf.length) opts = inTurf;
+            } else {
+              // Stay in your own neighbourhood (police: the core); head back if you've strayed.
+              const area = p.hood !== null ? this.hoodNodes[p.hood] : p.police ? this.coreNodes : null;
+              if (area) {
+                const inside = opts.filter((l) => area.has(l));
+                if (inside.length) opts = inside;
+                else if (opts.length) {
+                  const h = p.hood !== null ? NEIGHBOURHOODS[p.hood] : CORE;
+                  const cx = (h.x0 + h.x1) / 2;
+                  const cz = (h.z0 + h.z1) / 2;
+                  opts = [opts.reduce((a, b) => (Math.hypot(this.nodes[a].x - cx, this.nodes[a].z - cz) < Math.hypot(this.nodes[b].x - cx, this.nodes[b].z - cz) ? a : b))];
+                }
+              }
             }
             p.from = p.to;
             p.to = opts.length ? opts[rng.int(0, opts.length - 1)] : target.links[0];

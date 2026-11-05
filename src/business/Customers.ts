@@ -1,3 +1,4 @@
+import { hoodAt } from '../npc/Neighbourhoods';
 import * as THREE from 'three';
 import { Rng } from '../core/math';
 import type { Services } from '../core/Services';
@@ -400,7 +401,10 @@ export class Customers {
     const ref = famVariants.length ? famVariants.reduce((s, v) => s + unitValue(v), 0) / famVariants.length : FAMILIES[fam].base;
     const units = Math.max(1, Math.min(this.wantUnits(prof), Math.round(prof.budget / ref)));
     const price = Math.round((units * ref * (0.95 + prof.loyalty / 400)) / 5) * 5;
-    const spot = this.rng.pick(MEET_SPOTS);
+    // They want to meet on a street corner in their own neighbourhood.
+    const area = p.hood !== null ? [...this.peds.hoodNodes[p.hood]] : [];
+    const node = area.length ? this.peds.nodes[this.rng.pick(area)] : null;
+    const spot: [number, number] = node ? [node.x, node.z] : this.rng.pick(MEET_SPOTS);
     const meet = { name: streetCorner(spot[0], spot[1]), x: spot[0], z: spot[1] };
     const deal: Deal = { id: this.nextId++, person: prof.idx, family: fam, units, price, meet, expires: this.absMinutes + 90, status: 'offered', ceiling: Math.round(price * this.rng.range(1.08, 1.3)), rounds: 0 };
     this.deals.unshift(deal);
@@ -638,6 +642,6 @@ export class Customers {
 
 export function streetCorner(x: number, z: number): string {
   const s = streetNameAt(x, z) ?? '';
-  const d = DISTRICTS[districtAt(x, z)].name;
+  const d = hoodAt(x, z)?.name ?? DISTRICTS[districtAt(x, z)].name;
   return `${s} (${d})`;
 }

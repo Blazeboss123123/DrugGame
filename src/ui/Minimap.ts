@@ -2,6 +2,7 @@ import type { Services } from '../core/Services';
 import { PROPERTIES } from '../properties/PropertyDefs';
 import { SHOP } from '../properties/CornerShop';
 import { FAMILIES } from '../products/Catalog';
+import { NEIGHBOURHOODS } from '../npc/Neighbourhoods';
 import { AVENUES, GRID, RIVER, ROAD, STREETS, WORLD_HALF, X_LINES, Z_LINES, bridgeSpan, districtAt, riverX } from '../world/CityPlan';
 
 /** Pixels per metre in the pre-rendered city map. */
@@ -140,6 +141,26 @@ export class CityMap {
     g.fillRect(X(SHOP.x - SHOP.w / 2), X(SHOP.z - SHOP.d / 2), SHOP.w * PPM, SHOP.d * PPM);
     g.fillStyle = '#a49b8c';
     for (const p of PROPERTIES) g.fillRect(X(p.x - p.w / 2), X(p.z - p.d / 2), p.w * PPM, p.d * PPM);
+    // Neighbourhoods: soft outline and a big name, so it's clear where each customer lives.
+    for (const h of NEIGHBOURHOODS) {
+      g.strokeStyle = 'rgba(242,162,58,0.35)';
+      g.lineWidth = 3;
+      g.setLineDash([14, 10]);
+      g.strokeRect(X(h.x0) + 4, X(h.z0) + 4, (h.x1 - h.x0) * PPM - 8, (h.z1 - h.z0) * PPM - 8);
+      g.setLineDash([]);
+      g.save();
+      g.font = '800 34px "Big Shoulders Display", Impact, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.lineWidth = 6;
+      g.strokeStyle = 'rgba(10,12,14,0.55)';
+      g.fillStyle = 'rgba(242,214,160,0.75)';
+      const cx = X((h.x0 + h.x1) / 2);
+      const cy = X((h.z0 + h.z1) / 2) - 40;
+      g.strokeText(h.name.toUpperCase(), cx, cy);
+      g.fillText(h.name.toUpperCase(), cx, cy);
+      g.restore();
+    }
     // Street names along every block of every road, upright on avenues rotated.
     g.font = `700 ${11}px Archivo, Arial, sans-serif`;
     g.textAlign = 'center';

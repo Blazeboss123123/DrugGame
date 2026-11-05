@@ -5,6 +5,7 @@ import { GANGS, GANG_IDS } from '../business/Rivals';
 import { UPGRADES } from '../business/Upgrades';
 import { EFFECTS, FAMILIES, INGREDIENTS, ITEMS, QUALITY_NAMES, unitValue } from '../products/Catalog';
 import { PROPERTIES } from '../properties/PropertyDefs';
+import { NEIGHBOURHOODS } from '../npc/Neighbourhoods';
 import { SHOP } from '../properties/CornerShop';
 import { PAINTS, VEHICLE_TYPES, type VehicleType } from '../vehicles/Vehicles';
 import { DISTRICTS, GRID, WORLD_HALF, X_LINES, Z_LINES, districtAt, riverX, type District } from '../world/CityPlan';
@@ -201,11 +202,18 @@ export class Phone {
       }
       case 'contacts': {
         html += this.header('Customers');
-        const cs = s.customers.customers.sort((a, b) => b.loyalty - a.loyalty);
-        html += `<p class="empty">${cs.length} customer${cs.length === 1 ? '' : 's'}. Each one only wants so much at a time; their need refills over about a day.</p>`;
+        const hoodOf = (idx: number) => s.customers.person(idx).hood ?? 99;
+        const cs = s.customers.customers.sort((a, b) => hoodOf(a.idx) - hoodOf(b.idx) || b.loyalty - a.loyalty);
+        html += `<p class="empty">${cs.length} customer${cs.length === 1 ? '' : 's'}, grouped by where they live. They hang around their own neighbourhood and want to meet there. Each one only wants so much at a time; their need refills over about a day.</p>`;
+        let lastHood = -2;
         for (const c of cs) {
           const p = s.customers.person(c.idx);
-          html += `<div class="contact"><div class="contact-top"><strong>${esc(p.name)}</strong><span>${c.deals} deals · $${c.spent}</span></div><div class="dual"><span>Loyalty</span><div class="loyalty"><i style="width:${c.loyalty}%"></i></div><span>Wants</span><div class="loyalty need"><i style="width:${Math.round(c.need * 100)}%"></i></div></div><div class="chips">${effectChips(c.likes)}</div><span class="muted">Prefers ${FAMILIES[c.family].name} · budget ~$${c.budget} · up to ${c.appetite} units · ${DISTRICTS[districtAt(p.x, p.z)].name}</span></div>`;
+          if ((p.hood ?? -1) !== lastHood) {
+            lastHood = p.hood ?? -1;
+            const h = p.hood !== null ? NEIGHBOURHOODS[p.hood] : null;
+            html += `<div class="mk-group">${h ? `${esc(h.name)} <span class="muted small">${esc(h.blurb)}</span>` : 'Elsewhere'}</div>`;
+          }
+          html += `<div class="contact"><div class="contact-top"><strong>${esc(p.name)}</strong><span>${c.deals} deals · $${c.spent}</span></div><div class="dual"><span>Loyalty</span><div class="loyalty"><i style="width:${c.loyalty}%"></i></div><span>Wants</span><div class="loyalty need"><i style="width:${Math.round(c.need * 100)}%"></i></div></div><div class="chips">${effectChips(c.likes)}</div><span class="muted">Prefers ${FAMILIES[c.family].name} · budget ~$${c.budget} · up to ${c.appetite} units · lives in ${p.hood !== null ? NEIGHBOURHOODS[p.hood].name : DISTRICTS[districtAt(p.x, p.z)].name}</span></div>`;
         }
         break;
       }
