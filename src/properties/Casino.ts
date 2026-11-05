@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Services } from '../core/Services';
 import { SimpleInteractable, ownMaterial } from '../interaction/Interactable';
+import { Door } from '../interaction/Objects';
 import type { CharacterInstance, CharacterPool, Outfit } from '../npc/Characters';
 import { openBlackjack, openDoubleUp, openSlots } from '../ui/CasinoGames';
 import type { Heightmap, Pad } from '../world/Heightmap';
@@ -9,7 +10,10 @@ import { BuildKit, type Opening } from './BuildKit';
 import { loadKitMaterials } from './Properties';
 
 /** Lucky 7 Casino on Main St, downtown. Front faces -z (Main St). Open around the clock. */
-export const CASINO = { x: 37.5, z: 25, w: 30, d: 22 };
+export const CASINO = { x: 37.5, z: 25, w: 30, d: 22, opens: 20 * 60, closes: 4 * 60 };
+
+/** The Lucky 7 opens its doors at 20:00 and closes at 04:00. */
+export const casinoOpen = (minutes: number) => minutes >= CASINO.opens || minutes < CASINO.closes;
 export const CASINO_PAD = { x0: CASINO.x - CASINO.w / 2 - 2, x1: CASINO.x + CASINO.w / 2 + 2, z0: CASINO.z - CASINO.d / 2 - 6, z1: CASINO.z + CASINO.d / 2 + 2 };
 const H = 6;
 const FLOOR = 0.2;
@@ -108,6 +112,18 @@ export class Casino {
   private screens: THREE.MeshStandardMaterial[] = [];
   private staff: { pos: THREE.Vector3; yaw: number; outfit: Outfit; inst: CharacterInstance | null }[] = [];
   private t = 0;
+  private signMat!: THREE.MeshStandardMaterial;
+  private lights: THREE.PointLight[] = [];
+  door!: Door;
+
+  get open() {
+    return casinoOpen(this.svc.time.minutes);
+  }
+
+  private play(fn: () => void) {
+    if (this.open) fn();
+    else this.svc.ui.toast('The Lucky 7 is closed. Doors open at 20:00.', 'warn');
+  }
 
   constructor(
     private svc: Services,
@@ -223,7 +239,7 @@ export class Casino {
       const knob = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 8), new THREE.MeshStandardMaterial({ color: 0xc0192c, roughness: 0.3 }));
       knob.position.copy(this.L(slotX + 0.1, 1.47, z + 0.55));
       this.group.add(lever, knob);
-      const it = new SimpleInteractable(`casino:slot-${i}`, () => `Play slot machine ${i + 1}`, () => openSlots(svc, i), [screen], 2.6);
+      const it = new SimpleInteractable(`casino:slot-${i}`, () => (this.open ? `Play slot machine ${i + 1}` : 'Closed · opens 20:00'), () => this.play(() => openSlots(svc, i)), [screen], 2.6);
       const p = this.L(slotX, 1.0, z);
       const col = svc.physics.box(p.x, p.y, p.z, 0.5, 1.0, 0.5);
       col.setSensor(true);
@@ -237,7 +253,7 @@ export class Casino {
     felt.rotation.z = Math.PI;
     felt.position.copy(this.L(8, 0.86, 0));
     this.group.add(felt);
-    const bj = new SimpleInteractable('casino:blackjack', () => 'Play blackjack', () => openBlackjack(svc), [felt], 3);
+    const bj = new SimpleInteractable('casino:blackjack', () => (this.open ? 'Play blackjack' : 'Table closed · opens 20:00'), () => this.play(() => openBlackjack(svc)), [felt], 3);
     const bp = this.L(8, 0.9, 0);
     const bc = svc.physics.box(bp.x, bp.y, bp.z, 3, 0.2, 1.2);
     bc.setSensor(true);
@@ -251,13 +267,20 @@ export class Casino {
     du.rotation.x = -Math.PI / 2;
     du.position.copy(this.L(0, 0.86, 5.2));
     this.group.add(du);
-    const dut = new SimpleInteractable('casino:doubleup', () => 'Play Double Up (x2 · x4 · x8)', () => openDoubleUp(svc), [du], 3);
+    const dut = new SimpleInteractable('casino:doubleup', () => (this.open ? 'Play Double Up (x2 · x4 · x8)' : 'Table closed · opens 20:00'), () => this.play(() => openDoubleUp(svc)), [du], 3);
     const dp = this.L(0, 0.9, 5.2);
     const dc = svc.physics.box(dp.x, dp.y, dp.z, 3.4, 0.2, 1);
     dc.setSensor(true);
     svc.physics.tag(dc, { interactable: dut });
     svc.interaction.register(dut);
     this.staff.push({ pos: this.L(0, 0, 6.9), yaw: Math.PI, outfit: 'Suit', inst: null });
+
+    // Glass entrance door: locked until 20:00 (you can always get out).
+    const dm = new THREE.MeshStandardMaterial({ color: 0xd9a63a, roughness: 0.2, metalness: 0.6, transparent: true, opacity: 0.55 });
+    this.door = new Door(svc, 'casino:door', this.L(-1.6, 0, -hd), 0, 3.2, 3, dm, 'door', () =>
+      this.open || this.inside(svc.player.position) ? null : 'Lucky 7 is closed · opens 20:00 (until 04:00)',
+    );
+    svc.interaction.register(this.door);
 
     // Lights: warm chandeliers inside.
     for (const [x, z] of [
@@ -269,6 +292,7 @@ export class Casino {
       const l = new THREE.PointLight(0xffd8a0, 14, 16, 2);
       l.position.copy(this.L(x, H - 0.8, z));
       this.group.add(l);
+      this.lights.push(l);
       const ch = new THREE.Mesh(new THREE.IcosahedronGeometry(0.35, 1), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffd8a0, emissiveIntensity: 3, roughness: 0.2 }));
       ch.position.copy(this.L(x, H - 0.7, z));
       this.group.add(ch);
@@ -276,7 +300,7 @@ export class Casino {
 
     // Neon sign and chasing marquee bulbs on the frontage.
     const sign = letterTexture('LUCKY 7 CASINO', '#000000', '#ffcf3a', 1024, 160);
-    const signMat = new THREE.MeshStandardMaterial({ map: sign, emissive: 0xffffff, emissiveMap: sign, emissiveIntensity: 2.4, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const signMat = (this.signMat = new THREE.MeshStandardMaterial({ map: sign, emissive: 0xffffff, emissiveMap: sign, emissiveIntensity: 2.4, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
     const signMesh = new THREE.Mesh(new THREE.PlaneGeometry(13, 2), signMat);
     signMesh.position.copy(this.L(0, 4.85, -hd - 0.4));
     signMesh.rotation.y = Math.PI;
@@ -320,14 +344,19 @@ export class Casino {
     this.t += dt;
     // Marquee chase: the two bulb sets alternate.
     const phase = Math.floor(this.t * 3) % 2;
+    const open = this.open;
     this.bulbs.forEach((b, i) => {
-      if (i < SLOTS) b.emissiveIntensity = 1.5 + Math.sin(this.t * 4 + i) * 1.2;
-      else b.emissiveIntensity = (i - SLOTS) % 2 === phase ? 3.2 : 0.4;
+      if (i < SLOTS) b.emissiveIntensity = open ? 1.5 + Math.sin(this.t * 4 + i) * 1.2 : 0.2;
+      else b.emissiveIntensity = open ? ((i - SLOTS) % 2 === phase ? 3.2 : 0.4) : 0;
     });
+    this.signMat.emissiveIntensity = open ? 2.4 : 0.25;
+    // At closing time the doors swing shut behind the last customer.
+    if (!open && this.door?.isOpen && !this.inside(this.svc.player.position) && Math.hypot(this.svc.player.position.x - this.origin.x, this.svc.player.position.z - (this.origin.z - CASINO.d / 2)) > 3) this.door.interact();
+    for (const l of this.lights) l.intensity = open ? 14 : 2;
     for (const s of this.screens) s.emissiveIntensity = 0.6 + Math.sin(this.t * 2) * 0.1;
     // Dealers: borrowed from the character pool while you're nearby.
     const pl = this.svc.player.position;
-    const near = Math.hypot(pl.x - this.origin.x, pl.z - this.origin.z) < 60;
+    const near = open && Math.hypot(pl.x - this.origin.x, pl.z - this.origin.z) < 60;
     for (const s of this.staff) {
       if (this.chars && near && !s.inst) {
         s.inst = this.chars.acquire(s.outfit, this);

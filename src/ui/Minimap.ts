@@ -1,7 +1,7 @@
 import type { Services } from '../core/Services';
 import { PROPERTIES } from '../properties/PropertyDefs';
 import { SHOP } from '../properties/CornerShop';
-import { CASINO } from '../properties/Casino';
+import { CASINO, casinoOpen } from '../properties/Casino';
 import { FAMILIES } from '../products/Catalog';
 import { NEIGHBOURHOODS } from '../npc/Neighbourhoods';
 import { AVENUES, GRID, RIVER, ROAD, STREETS, WORLD_HALF, X_LINES, Z_LINES, bridgeSpan, districtAt, riverX } from '../world/CityPlan';
@@ -202,7 +202,7 @@ export function currentMarkers(svc: Services, waypoint: { x: number; z: number }
   const h = svc.world.starter.origin;
   m.push({ kind: 'home', x: h.x, z: h.z, label: '14 Larch Street' });
   m.push({ kind: 'shop', x: SHOP.x, z: SHOP.z, label: 'Kwik Corner' });
-  m.push({ kind: 'casino', x: CASINO.x, z: CASINO.z, label: 'Lucky 7 Casino' });
+  m.push({ kind: 'casino', x: CASINO.x, z: CASINO.z, label: casinoOpen(svc.time.minutes) ? 'Lucky 7 Casino · open until 04:00' : 'Lucky 7 Casino · opens 20:00' });
   for (const p of PROPERTIES) m.push({ kind: svc.properties.owns(p.id) ? 'owned' : 'sale', x: p.x, z: p.z, label: svc.properties.owns(p.id) ? p.name : `${p.name} · for sale` });
   for (const v of svc.vehicles.list) m.push({ kind: 'car', x: v.pos.x, z: v.pos.z, label: v.def.name });
   const pl = svc.player.position;
