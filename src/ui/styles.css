@@ -1169,3 +1169,5 @@ kbd,
 .pk-quick { opacity: 0.7; }
 @media (max-width: 760px) { .pk-scene { grid-template-columns: 1fr; } }
 .pk-quick { width: auto !important; align-self: flex-start; }
+.shop-row > div.shop-icon { flex: 0 0 40px !important; width: 40px; height: 40px; overflow: hidden; }
+.shop-row > div.shop-icon img { width: 40px !important; height: 40px !important; display: block; object-fit: contain; }
