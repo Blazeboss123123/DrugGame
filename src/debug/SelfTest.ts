@@ -420,6 +420,15 @@ export async function runSelfTest(game: Game): Promise<SelfTestReport> {
     record('Kwik Corner exists across the street', !!world.shop && world.shop.door !== undefined, world.shop ? 'built' : 'missing');
   }
 
+  // 13i. The people nearest to you use the rigged character models, not the far-distance bodies.
+  {
+    const ready = game.chars.ready;
+    const pl = game.player.position;
+    const near = game.peds.people.filter((p) => p.visible && Math.hypot(p.x - pl.x, p.z - pl.z) < 25);
+    const blocky = near.filter((p) => !p.char).length;
+    record('Nearby people use the real character models', ready && blocky === 0, ready ? `${near.length - blocky}/${near.length} people within 25 m are rigged models (pool ${game.chars.live.size}/${game.chars.max})` : 'character models did not load in this browser');
+  }
+
   // 14. Inventory transfers never duplicate items.
   {
     const { Container } = await import('../inventory/Inventory');

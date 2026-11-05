@@ -150,7 +150,7 @@ export class Game implements UIHost {
     this.properties = new Properties(svc);
     this.vehicles = new Vehicles(svc, this.camera);
     this.particles = new Particles(this.scene);
-    this.chars = new CharacterPool(this.charLib, this.scene, 42);
+    this.chars = new CharacterPool(this.charLib, this.scene, 56);
     this.world.chars = this.chars;
     this.placement = new Placement(svc, this.camera);
     this.employees = new Employees(svc, this.chars);

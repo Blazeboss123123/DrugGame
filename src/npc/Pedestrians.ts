@@ -69,6 +69,8 @@ export class Person implements Interactable {
   outfit: Outfit = 'Casual_Hoodie';
   look: CharLook = { skin: 0xf1c8a8, hair: 0x1c1612, hue: 0 };
   char: CharacterInstance | null = null;
+  /** Set each frame: this person is among the closest and should use a rigged model. */
+  wantChar = false;
   constructor(
     readonly index: number,
     readonly id: string,
@@ -310,11 +312,40 @@ export class Pedestrians {
     this.release(p);
   }
 
+  /**
+   * Rigged character models are pooled, so only so many can be on screen. Hand them to the people
+   * closest to the player first (release far ones before acquiring), leaving a few for staff,
+   * other players and the shopkeeper. Everyone else falls back to the simple far-distance body.
+   */
+  private rankCharacters(player: THREE.Vector3) {
+    if (!this.chars.ready) return;
+    const cand: { p: Person; d2: number }[] = [];
+    let mine = 0;
+    for (const p of this.people) {
+      p.wantChar = false;
+      if (p.char) mine++;
+      const dx = p.x - player.x;
+      const dz = p.z - player.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < (p.char ? NEAR_OUT * NEAR_OUT : NEAR_IN * NEAR_IN)) cand.push({ p, d2 });
+    }
+    const others = this.chars.live.size - mine;
+    const budget = Math.max(0, this.chars.max - others - 6);
+    cand.sort((a, b) => a.d2 - b.d2);
+    for (let i = 0; i < cand.length && i < budget; i++) cand[i].p.wantChar = true;
+    for (const p of this.people)
+      if (p.char && !p.wantChar) {
+        this.chars.release(p.char);
+        p.char = null;
+      }
+  }
+
   update(dt: number, night: number, curfew: boolean): void {
     const player = this.svc.player.position;
     const rng = this.rng;
     const r = this.renderer;
     const rivals = this.svc.rivals;
+    this.rankCharacters(player);
     for (let k = 0; k < this.people.length; k++) {
       const p = this.people[k];
       if (p.cooldown > 0) p.cooldown -= dt;
@@ -431,7 +462,7 @@ export class Pedestrians {
       else p.phase += (Math.round(p.phase / Math.PI) * Math.PI - p.phase) * Math.min(1, dt * 6);
       if (p.mode !== 'chase') p.body.setNextKinematicTranslation({ x: p.x, y: p.visible ? p.y + 0.86 : -500, z: p.z });
 
-      const near = p.visible && this.chars.ready && (p.char ? d2 < NEAR_OUT * NEAR_OUT : d2 < NEAR_IN * NEAR_IN);
+      const near = p.visible && this.chars.ready && p.wantChar;
       if (near && !p.char) {
         p.char = this.chars.acquire(p.outfit, p);
         p.char?.setLook(p.look);
