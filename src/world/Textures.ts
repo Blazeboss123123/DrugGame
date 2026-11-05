@@ -286,6 +286,44 @@ export function asphaltTexture(markings: 'road' | 'plain'): THREE.CanvasTexture 
   return tex(c);
 }
 
+/** Road paint on a transparent background (worn), layered over the HD asphalt by the road shader. */
+export function markingsTexture(kind: 'road' | 'zebra' | 'plain'): THREE.CanvasTexture {
+  const rng = new Rng(kind === 'road' ? 17 : kind === 'zebra' ? 19 : 23);
+  const W = kind === 'road' ? 256 : 512;
+  const H = 512;
+  const [c, g] = canvas(W, H);
+  if (kind === 'road') {
+    g.fillStyle = '#e4e0d4';
+    g.fillRect(6, 0, 4, H);
+    g.fillRect(W - 10, 0, 4, H);
+    g.fillStyle = '#e0ac3c';
+    for (let y = 0; y < H; y += 128) g.fillRect(W / 2 - 3, y + 20, 6, 60);
+  } else if (kind === 'zebra') {
+    g.fillStyle = 'rgba(232,228,216,0.95)';
+    const S = 512;
+    const m = S / 14;
+    const inner = (14 / 2 - 2.6) * m;
+    for (let k = 0; k < 9; k++) {
+      const t = (2.5 + k) * m;
+      if (t > S - 2.5 * m) break;
+      g.fillRect(t, 6, m * 0.5, inner - 8);
+      g.fillRect(t, S - inner + 2, m * 0.5, inner - 8);
+      g.fillRect(6, t, inner - 8, m * 0.5);
+      g.fillRect(S - inner + 2, t, inner - 8, m * 0.5);
+    }
+  }
+  // Wear: knock random flecks out of the paint.
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < W * H * 0.06; i++) {
+    g.globalAlpha = rng.range(0.15, 0.7);
+    const sz = rng.range(0.5, 2.5);
+    g.fillRect(rng.range(0, W), rng.range(0, H), sz, sz);
+  }
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'source-over';
+  return tex(c);
+}
+
 export function intersectionTexture(zebra: boolean): THREE.CanvasTexture {
   const rng = new Rng(zebra ? 9 : 10);
   const S = 512;

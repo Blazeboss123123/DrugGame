@@ -16,15 +16,17 @@ const GradeShader = {
     vignette: { value: 0.32 },
     warmth: { value: 0 },
     lift: { value: 0 },
+    saturation: { value: 1.1 },
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float vignette; uniform float warmth; uniform float lift; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float vignette; uniform float warmth; uniform float lift; uniform float saturation; varying vec2 vUv;
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
       // Gentle filmic split-tone: warm highlights at golden hour, cool shadows at night.
       float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
       c.rgb += warmth * vec3(0.06, 0.02, -0.04) * smoothstep(0.2, 1.2, l);
       c.rgb += lift * vec3(-0.01, 0.0, 0.03) * (1.0 - smoothstep(0.0, 0.4, l));
+      c.rgb = max(mix(vec3(l), c.rgb, saturation), 0.0);
       vec2 d = vUv - 0.5;
       c.rgb *= 1.0 - vignette * dot(d, d) * 1.6;
       gl_FragColor = c;
@@ -75,12 +77,13 @@ export class PostFX {
   update(night: number, dusk: number) {
     if (!this.bloom || !this.grade) return;
     const ultra = this.settings.graphics === 'ultra';
-    this.bloom.strength = (0.18 + night * 0.75) * (ultra ? 1.15 : 0.9);
+    this.bloom.strength = (0.16 + night * 0.55) * (ultra ? 1.15 : 0.9);
     this.bloom.threshold = 0.95 - night * 0.3;
     this.bloom.radius = 0.5 + night * 0.2;
     this.grade.uniforms.warmth.value = dusk;
     this.grade.uniforms.lift.value = night;
     this.grade.uniforms.vignette.value = ultra ? 0.38 : 0.28;
+    this.grade.uniforms.saturation.value = (ultra ? 1.14 : 1.1) - night * 0.25;
   }
 
   render() {

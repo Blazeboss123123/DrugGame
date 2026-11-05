@@ -3,7 +3,8 @@ import type { Physics } from '../physics/Physics';
 import { GeoBatch } from './GeoBatch';
 import { RIVER, ROAD, WORLD_HALF, X_LINES, Z_LINES, bridgeSpan, districtAt, riverBed, riverX } from './CityPlan';
 import type { Heightmap } from './Heightmap';
-import { asphaltTexture, intersectionTexture, noiseTexture, sidewalkTexture } from './Textures';
+import { asphaltTexture, intersectionTexture, markingsTexture, noiseTexture, sidewalkTexture } from './Textures';
+import { repeated, surfaces } from './Surfaces';
 
 const ROAD_Y = 0.06;
 const WALK_Y = ROAD.curb + 0.06;
@@ -43,10 +44,14 @@ export function buildRoads(hm: Heightmap, physics: Physics): THREE.Group {
 
   const group = new THREE.Group();
   group.name = 'roads';
-  const roadMat = new THREE.MeshStandardMaterial({ map: asphaltTexture('road'), roughness: 0.92 });
-  const walkMat = new THREE.MeshStandardMaterial({ map: sidewalkTexture(), roughness: 0.9 });
-  const xPlain = new THREE.MeshStandardMaterial({ map: intersectionTexture(false), roughness: 0.92 });
-  const xZebra = new THREE.MeshStandardMaterial({ map: intersectionTexture(true), roughness: 0.92 });
+  const surf = surfaces();
+  // Road UVs span 9 m across and 8 m along; intersection UVs span 14 m. Asphalt tiles every 4.5 m.
+  const roadMat = surf ? hdRoad(markingsTexture('road'), 2, 8 / 4.5) : new THREE.MeshStandardMaterial({ map: asphaltTexture('road'), roughness: 0.92 });
+  const walkMat = surf
+    ? new THREE.MeshStandardMaterial({ map: repeated(surf.pave, 0.5), normalMap: repeated(surf.paveN, 0.5), roughnessMap: repeated(surf.paveORM, 0.5), color: 0xfff4e6 })
+    : new THREE.MeshStandardMaterial({ map: sidewalkTexture(), roughness: 0.9 });
+  const xPlain = surf ? hdRoad(markingsTexture('plain'), 14 / 4.5, 14 / 4.5) : new THREE.MeshStandardMaterial({ map: intersectionTexture(false), roughness: 0.92 });
+  const xZebra = surf ? hdRoad(markingsTexture('zebra'), 14 / 4.5, 14 / 4.5) : new THREE.MeshStandardMaterial({ map: intersectionTexture(true), roughness: 0.92 });
   const concrete = new THREE.MeshStandardMaterial({ map: noiseTexture(51, '#9a968e', '#fff', '#333', 8000, 2), roughness: 0.88 });
   for (const [batch, mat] of [
     [b.road, roadMat],
@@ -65,6 +70,28 @@ export function buildRoads(hm: Heightmap, physics: Physics): THREE.Group {
 
   group.add(river(hm));
   return group;
+}
+
+/**
+ * HD road surface: tiling asphalt colour/normal/roughness from the surface set, with the road paint
+ * (a transparent canvas in road UVs) laid on top in the shader.
+ */
+function hdRoad(markings: THREE.Texture, ru: number, rv: number): THREE.MeshStandardMaterial {
+  const s = surfaces()!;
+  const mat = new THREE.MeshStandardMaterial({ map: markings, normalMap: repeated(s.asphaltN, ru, rv), roughnessMap: repeated(s.asphaltORM, ru, rv), normalScale: new THREE.Vector2(0.8, 0.8) });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.tAsphalt = { value: s.asphalt };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D tAsphalt;')
+      .replace(
+        '#include <map_fragment>',
+        `vec4 mk = texture2D(map, vMapUv);
+        vec3 asp = texture2D(tAsphalt, vNormalMapUv).rgb;
+        diffuseColor.rgb *= mix(asp * 1.18, mk.rgb, mk.a);`,
+      );
+  };
+  mat.customProgramCacheKey = () => 'hd-road';
+  return mat;
 }
 
 /** One road segment: asphalt, two raised sidewalks with curb faces and an outer skirt. */

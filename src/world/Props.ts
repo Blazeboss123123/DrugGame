@@ -7,6 +7,8 @@ import { ROAD, X_LINES, Z_LINES, bridgeSpan, districtAt } from './CityPlan';
 import { GeoBatch } from './GeoBatch';
 import type { Heightmap } from './Heightmap';
 import { asphaltTexture, chainLinkTexture, facadeTexture, letterTexture, noiseTexture } from './Textures';
+import { surfaces } from './Surfaces';
+import { broadleafGeometry, pineGeometry, treeMaterials } from './Trees';
 
 const WALK = ROAD.curb + 0.06;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -247,32 +249,53 @@ export function buildProps(content: CityContent, hm: Heightmap, physics: Physics
     const yaw = rng.range(0, Math.PI * 2);
     const m = mtx(t.x, y, t.z, yaw, t.scale);
     trunks.push(m);
-    const c = new THREE.Color().setHSL(rng.range(0.22, 0.3), rng.range(0.35, 0.55), rng.range(0.24, 0.34));
+    const c = surfaces() ? new THREE.Color().setHSL(rng.range(0.2, 0.31), rng.range(0.3, 0.55), rng.range(0.38, 0.5)).multiplyScalar(1.05) : new THREE.Color().setHSL(rng.range(0.22, 0.3), rng.range(0.35, 0.55), rng.range(0.24, 0.34));
     if (t.type === 'broad') {
       broad.push(m);
       broadCol.push(c);
     } else {
       pine.push(m);
-      pineCol.push(c.offsetHSL(0.04, -0.1, -0.06));
+      pineCol.push(surfaces() ? c.clone().multiplyScalar(0.85) : c.offsetHSL(0.04, -0.1, -0.06));
     }
     physics.cylinder(t.x, y + 1.5, t.z, 1.5, 0.22 * t.scale, 'wood');
   }
-  const trunkGeo = merge([at(new THREE.CylinderGeometry(0.13, 0.22, 3.2, 7), 0, 1.6, 0)]);
-  add(instanced(trunkGeo, new THREE.MeshStandardMaterial({ color: 0x4a3a2c, roughness: 0.95 }), trunks));
-  const canopy = merge([
-    at(new THREE.IcosahedronGeometry(1.9, 1), 0, 4.3, 0),
-    at(new THREE.IcosahedronGeometry(1.4, 1), 0.9, 3.7, 0.5),
-    at(new THREE.IcosahedronGeometry(1.3, 1), -0.8, 3.9, -0.6),
-    at(new THREE.IcosahedronGeometry(1.1, 1), 0.2, 5.4, -0.2),
-  ]);
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
-  add(instanced(canopy, leafMat, broad, broadCol));
-  const pineGeo = merge([
-    at(new THREE.ConeGeometry(2.0, 3.0, 8), 0, 3.0, 0),
-    at(new THREE.ConeGeometry(1.6, 2.6, 8), 0, 4.6, 0),
-    at(new THREE.ConeGeometry(1.1, 2.2, 8), 0, 6.0, 0),
-  ]);
-  add(instanced(pineGeo, leafMat, pine, pineCol));
+  const surf = surfaces();
+  if (surf) {
+    // HD trees: several seeded variants of each species, instanced per variant.
+    const mats = treeMaterials(surf);
+    const VARIANTS = 3;
+    const species: [THREE.Matrix4[], THREE.Color[], (s: number) => { trunk: THREE.BufferGeometry; foliage: THREE.BufferGeometry }, THREE.Material, THREE.Material, number][] = [
+      [broad, broadCol, broadleafGeometry, mats.broadTrunk, mats.leaves, 100],
+      [pine, pineCol, pineGeometry, mats.pineTrunk, mats.needles, 200],
+    ];
+    for (const [list, cols, make, trunkMat, leafMat, seed] of species) {
+      for (let v = 0; v < VARIANTS; v++) {
+        const ms = list.filter((_, i) => i % VARIANTS === v);
+        const cs = cols.filter((_, i) => i % VARIANTS === v);
+        if (!ms.length) continue;
+        const geo = make(seed + v * 17);
+        add(instanced(geo.trunk, trunkMat, ms));
+        add(instanced(geo.foliage, leafMat, ms, cs));
+      }
+    }
+  } else {
+    const trunkGeo = merge([at(new THREE.CylinderGeometry(0.13, 0.22, 3.2, 7), 0, 1.6, 0)]);
+    add(instanced(trunkGeo, new THREE.MeshStandardMaterial({ color: 0x4a3a2c, roughness: 0.95 }), trunks));
+    const canopy = merge([
+      at(new THREE.IcosahedronGeometry(1.9, 1), 0, 4.3, 0),
+      at(new THREE.IcosahedronGeometry(1.4, 1), 0.9, 3.7, 0.5),
+      at(new THREE.IcosahedronGeometry(1.3, 1), -0.8, 3.9, -0.6),
+      at(new THREE.IcosahedronGeometry(1.1, 1), 0.2, 5.4, -0.2),
+    ]);
+    const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
+    add(instanced(canopy, leafMat, broad, broadCol));
+    const pineGeo = merge([
+      at(new THREE.ConeGeometry(2.0, 3.0, 8), 0, 3.0, 0),
+      at(new THREE.ConeGeometry(1.6, 2.6, 8), 0, 4.6, 0),
+      at(new THREE.ConeGeometry(1.1, 2.2, 8), 0, 6.0, 0),
+    ]);
+    add(instanced(pineGeo, leafMat, pine, pineCol));
+  }
 
   // ------------------------------------------------------------ cars
   const carM: THREE.Matrix4[] = [];

@@ -13,7 +13,7 @@ export class Sky {
   /** 0 = full day, 1 = full night. Drives window glow and street lights. */
   night = 0;
   private dir = new THREE.Vector3();
-  private dayFog = new THREE.Color(0xb6c3cc);
+  private dayFog = new THREE.Color(0xa8bfd6);
   private duskFog = new THREE.Color(0xc79a7e);
   private nightFog = new THREE.Color(0x0d1320);
   private warm = new THREE.Color(0xffa45c);
@@ -28,6 +28,7 @@ export class Sky {
   private envRT: THREE.WebGLRenderTarget | null = null;
   private envTimer = 0;
   private lastEnvSun = new THREE.Vector3(0, -1, 0);
+  private deep = { value: 1 };
   private stars: THREE.Points;
   private moonMesh: THREE.Mesh;
 
@@ -37,11 +38,19 @@ export class Sky {
     private settings: Settings,
   ) {
     this.sky.scale.setScalar(4500);
+    // Deepen the zenith blue (the stock shader is pale at midday); fades out at sunrise/sunset.
+    for (const sk of [this.sky, this.envSky]) {
+      const m = sk.material as THREE.ShaderMaterial;
+      m.uniforms.uDeep = this.deep;
+      m.fragmentShader = m.fragmentShader
+        .replace('void main() {', 'uniform float uDeep;\nvoid main() {')
+        .replace('gl_FragColor = vec4( retColor, 1.0 );', 'float zen = clamp(direction.y * 1.4, 0.0, 1.0);\nretColor *= mix(vec3(1.0), vec3(0.58, 0.78, 1.15), zen * uDeep);\ngl_FragColor = vec4( retColor, 1.0 );');
+    }
     const u = this.sky.material.uniforms;
-    u.turbidity.value = 5.5;
-    u.rayleigh.value = 1.4;
-    u.mieCoefficient.value = 0.004;
-    u.mieDirectionalG.value = 0.82;
+    u.turbidity.value = 2.6;
+    u.rayleigh.value = 1.5;
+    u.mieCoefficient.value = 0.0035;
+    u.mieDirectionalG.value = 0.86;
     scene.add(this.sky);
     this.sun.castShadow = true;
     const cam = this.sun.shadow.camera;
@@ -106,7 +115,7 @@ export class Sky {
     const old = this.envRT;
     this.envRT = this.pmrem.fromScene(this.envScene, 0.02, 0.1, 200);
     this.scene.environment = this.envRT.texture;
-    this.scene.environmentIntensity = 0.35 + (1 - this.night) * 0.75;
+    this.scene.environmentIntensity = 0.3 + (1 - this.night) * 0.45;
     old?.dispose();
   }
 
@@ -114,7 +123,9 @@ export class Sky {
     const q = this.settings.shadows;
     this.renderer.shadowMap.enabled = q !== 'off';
     this.sun.castShadow = q !== 'off';
-    const size = q === 'high' ? 2048 : 1024;
+    // Ultra graphics doubles shadow resolution for crisper tree and building shadows.
+    const size = q === 'high' ? (this.settings.graphics === 'ultra' ? 4096 : 2048) : 1024;
+    this.sun.shadow.radius = this.settings.graphics === 'ultra' ? 2 : 1;
     if (this.sun.shadow.mapSize.x !== size) {
       this.sun.shadow.mapSize.set(size, size);
       this.sun.shadow.map?.dispose();
@@ -131,6 +142,7 @@ export class Sky {
     this.night = 1 - smoothstep(-0.12, 0.08, se);
     const dusk = smoothstep(0.35, 0.02, Math.abs(se)) * (1 - this.night * 0.6);
     this.dusk = dusk;
+    this.deep.value = day * (1 - dusk * 0.8);
     const cam = camera?.position ?? focus;
     this.stars.position.copy(cam);
     (this.stars.material as THREE.PointsMaterial).opacity = this.night * (1 - indoors) * 0.95;
@@ -149,19 +161,20 @@ export class Sky {
     this.sun.position.z += this.sun.target.position.z - focus.z;
     if (se > -0.02) {
       this.sun.color.copy(this.warm).lerp(this.white, smoothstep(0.02, 0.45, se));
-      this.sun.intensity = lerp(0.2, 3.1, smoothstep(-0.02, 0.3, se));
+      this.sun.intensity = lerp(0.2, 4.2, smoothstep(-0.02, 0.3, se));
     } else {
       this.sun.color.copy(this.moon);
       this.sun.intensity = 0.32 * this.night;
     }
-    this.hemi.intensity = lerp(0.22, 1.05, day) * lerp(1, 0.55, indoors);
+    // Without the reflection environment (Low graphics) the hemisphere light has to carry all the fill.
+    this.hemi.intensity = lerp(0.2, 0.55, day) * lerp(1, 0.75, indoors) * (this.settings.graphics === 'low' ? 2.1 : 1);
     this.hemi.color.setHSL(0.6, 0.45, lerp(0.35, 0.75, day));
     this.hemi.groundColor.setHSL(0.09, 0.2, lerp(0.08, 0.3, day));
 
     const fogC = this.fog.color;
     fogC.copy(this.nightFog).lerp(this.dayFog, day).lerp(this.duskFog, dusk * 0.55);
-    this.fog.density = 1.6 / Math.max(200, this.settings.viewDistance);
-    this.renderer.toneMappingExposure = lerp(0.7, 0.82, day) + this.night * 0.1;
+    this.fog.density = 0.85 / Math.max(200, this.settings.viewDistance);
+    this.renderer.toneMappingExposure = lerp(0.72, 0.74, day) + this.night * 0.12;
     // The sky shader goes black at night; blend in a dark blue scene background through fog colour.
     (this.sky.material as THREE.ShaderMaterial).visible = this.night < 0.97;
     this.scene.background = this.night > 0.5 ? this.fog.color.clone().multiplyScalar(0.9) : null;

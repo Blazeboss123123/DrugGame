@@ -127,12 +127,16 @@ export function buildBuildings(specs: BuildingSpec[], physics: Physics): Buildin
       metalnessMap: t.orm,
       roughness: 1,
       metalness: 1,
+      // Relief from the facade's own shading: mortar lines, panel seams and window reveals catch the light.
+      bumpMap: style === 'glass' ? null : t.map,
+      bumpScale: style === 'glass' ? 0 : 2.2,
     });
     nightMaterials.push(mat);
     group.add(batch.mesh(mat)!);
   });
   const roofMat = new THREE.MeshStandardMaterial({ map: roofFlatTexture(), roughness: 0.95, vertexColors: true });
-  const shingleMat = new THREE.MeshStandardMaterial({ map: shingleTexture(), roughness: 0.9, side: THREE.DoubleSide, vertexColors: true });
+  const shingleTex = shingleTexture();
+  const shingleMat = new THREE.MeshStandardMaterial({ map: shingleTex, bumpMap: shingleTex, bumpScale: 3, roughness: 0.9, side: THREE.DoubleSide, vertexColors: true });
   const trimMat = new THREE.MeshStandardMaterial({ map: noiseTexture(61, '#bcb8b0', '#fff', '#555', 6000, 2), roughness: 0.85, vertexColors: true });
   const doorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.6, metalness: 0.1 });
   const atlas = signAtlas();

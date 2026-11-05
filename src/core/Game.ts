@@ -137,6 +137,7 @@ export class Game implements UIHost {
     this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.settings);
     this.time.setDayLength(this.settings.dayLength);
     this.world = new World(svc, this.bus);
+    this.world.maxAnisotropy = this.renderer.capabilities.getMaxAnisotropy();
     svc.world = this.world;
     this.player = new PlayerController(this.physics, this.camera, this.world.hm, this.bus, this.settings);
     this.player.canBoard = () => this.inventory.count('skateboard') > 0;
@@ -335,6 +336,8 @@ export class Game implements UIHost {
     this.camera.updateProjectionMatrix();
     this.time.setDayLength(this.settings.dayLength);
     this.postfx.apply();
+    this.sky.applyShadowQuality();
+    this.world.grass?.setQuality(this.settings.graphics);
     this.resize();
   }
 
@@ -755,7 +758,7 @@ export class Game implements UIHost {
     const focus = this.mode === 'title' ? this.camera.position : this.player.position;
     this.sky.update(this.time, focus, this.indoorBlend, dt, this.camera);
     this.postfx.update(this.sky.night, this.sky.dusk);
-    this.world.update(dt, this.sky.night, this.player.position);
+    this.world.update(dt, this.sky.night, this.player.position, this.camera.position);
     const m = this.time.minutes;
     const simDt = playing || this.externalDrive ? dt : 0;
     this.peds.update(simDt, this.sky.night, m >= 23 * 60 || m < 5 * 60);

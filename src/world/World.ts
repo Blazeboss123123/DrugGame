@@ -17,6 +17,9 @@ import { KIT_BUILDINGS, KitAssets, type KitName } from './KitAssets';
 import { Rng } from '../core/math';
 import { X_LINES, Z_LINES } from './CityPlan';
 import { buildTerrain } from './TerrainMesh';
+import { GrassField, buildGrassMask } from './GrassField';
+import { loadSurfaces, type SurfaceSet } from './Surfaces';
+import { WIND } from './Trees';
 import { PROPERTIES } from '../properties/PropertyDefs';
 
 export type Progress = (fraction: number, label: string) => void;
@@ -29,6 +32,11 @@ export class World {
   shop!: CornerShop;
   /** Character pool for hand-placed NPCs (the shopkeeper); set by Game before init. */
   chars: CharacterPool | null = null;
+  /** Max texture anisotropy of the renderer; set by Game before build. */
+  maxAnisotropy = 8;
+  surfaces!: SurfaceSet;
+  grass: GrassField | null = null;
+  private grassWeight: Float32Array | null = null;
   stats = { buildings: 0, trees: 0, cars: 0, colliders: 0 };
   private nightMats: THREE.MeshStandardMaterial[] = [];
   private props!: PropsResult;
@@ -48,6 +56,8 @@ export class World {
     } catch {
       /* fonts are optional */
     }
+    progress(0.08, 'Loading HD textures');
+    this.surfaces = await loadSurfaces(this.maxAnisotropy);
     progress(0.12, 'Shaping the land');
     await nextFrame();
     bakeTerrain(this.hm);
@@ -64,7 +74,9 @@ export class World {
 
     progress(0.38, 'Laying the ground');
     await nextFrame();
-    scene.add(buildTerrain(this.hm, physics, this.content.parks));
+    const terrain = buildTerrain(this.hm, physics, this.content.parks, this.surfaces);
+    scene.add(terrain.mesh);
+    this.grassWeight = terrain.grass;
 
     progress(0.5, 'Paving streets and bridges');
     await nextFrame();
@@ -102,6 +114,15 @@ export class World {
     scene.add(this.props.group);
     this.nightMats.push(...this.props.nightMaterials);
 
+    progress(0.92, 'Growing grass');
+    await nextFrame();
+    const houseRect = { x0: STARTER.house.x - 6.5, z0: STARTER.house.z - 5.5, x1: STARTER.house.x + 6.5, z1: STARTER.house.z + 7.6 };
+    const mask = buildGrassMask(this.hm, this.grassWeight!, this.content, [STARTER.plaza, shopPad, houseRect, ...this.propertyPads.values()]);
+    this.grassWeight = null;
+    this.grass = new GrassField(this.hm, mask, this.surfaces);
+    this.grass.setQuality(this.svc.settings.graphics);
+    scene.add(this.grass.group);
+
     // Initialise the query pipeline so ray casts see every static collider immediately.
     physics.world.step();
     this.stats = {
@@ -114,7 +135,9 @@ export class World {
     await nextFrame();
   }
 
-  update(dt: number, night: number, playerPos: THREE.Vector3): void {
+  update(dt: number, night: number, playerPos: THREE.Vector3, camPos: THREE.Vector3 = playerPos): void {
+    WIND.value += dt;
+    this.grass?.update(WIND.value, camPos, playerPos);
     waterNormals.offset.y -= dt * 0.08;
     waterNormals.offset.x += dt * 0.01;
     for (const m of this.nightMats) m.emissiveIntensity = night * (m.emissiveMap ? 1.25 : 3);

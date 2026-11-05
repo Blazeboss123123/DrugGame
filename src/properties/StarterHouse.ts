@@ -140,12 +140,18 @@ export class StarterHouse {
       foundation: new THREE.MeshStandardMaterial({ map: stoneTexture(), roughness: 0.9 }),
       wood: new THREE.MeshStandardMaterial({ map: woodFloorTexture(), roughness: 0.65 }),
       garageFloor: new THREE.MeshStandardMaterial({ map: noiseTexture(71, '#8e8b85', '#bbb', '#555', 9000, 3), roughness: 0.85 }),
-      siding: new THREE.MeshStandardMaterial({ map: sidingTexture(), roughness: 0.85 }),
+      siding: (() => {
+        const t = sidingTexture();
+        return new THREE.MeshStandardMaterial({ map: t, bumpMap: t, bumpScale: 2.5, roughness: 0.85 });
+      })(),
       plaster: new THREE.MeshStandardMaterial({ map: plasterTexture('#d9cfbf', 81), roughness: 0.95 }),
       plasterB: new THREE.MeshStandardMaterial({ map: plasterTexture('#b9c2b4', 82), roughness: 0.95 }),
       garageWall: new THREE.MeshStandardMaterial({ map: noiseTexture(83, '#a8a49b', '#ddd', '#555', 6000, 2), roughness: 0.95 }),
       ceiling: new THREE.MeshStandardMaterial({ color: 0xe8e4dc, roughness: 1, side: THREE.DoubleSide }),
-      roof: new THREE.MeshStandardMaterial({ map: shingleTexture(), roughness: 0.9, side: THREE.DoubleSide }),
+      roof: (() => {
+        const t = shingleTexture();
+        return new THREE.MeshStandardMaterial({ map: t, bumpMap: t, bumpScale: 3, roughness: 0.9, side: THREE.DoubleSide });
+      })(),
       glass: new THREE.MeshStandardMaterial({ color: 0xa9c6d6, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.22, depthWrite: false }),
       frame: new THREE.MeshStandardMaterial({ color: 0xf1eee8, roughness: 0.6 }),
       stone: new THREE.MeshStandardMaterial({ map: noiseTexture(84, '#9b968c', '#ddd', '#444', 8000, 2), roughness: 0.9 }),
