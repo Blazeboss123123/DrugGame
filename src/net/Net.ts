@@ -6,6 +6,7 @@ import type { CharacterInstance, CharacterPool, Outfit } from '../npc/Characters
 import { HumanoidRenderer } from '../npc/Humanoid';
 import { ITEMS } from '../products/Catalog';
 import { makeVehicleMesh, type VehicleType } from '../vehicles/Vehicles';
+import { WorldSync, type WorldOp } from './WorldSync';
 
 /**
  * Co-op multiplayer client. Everyone shares the streets: you see each other walking and driving,
@@ -118,12 +119,15 @@ export class Net {
   private nextTid = 1;
   private far: HumanoidRenderer;
   onChange?: () => void;
+  /** Shared equipment, plants and storage for everyone in the room. */
+  readonly sync: WorldSync;
 
   constructor(
     private svc: Services,
     private pool: CharacterPool,
   ) {
     this.far = new HumanoidRenderer(svc.scene, 8);
+    this.sync = new WorldSync(svc, (m) => this.send(m));
   }
 
   get online() {
@@ -209,6 +213,7 @@ export class Net {
     for (const [tid] of this.escrow) this.refund(tid);
     for (const p of this.players.values()) p.dispose(this.pool);
     this.players.clear();
+    this.sync.stop();
     this.ws = null;
     this.status = 'offline';
     this.onChange?.();
@@ -237,6 +242,7 @@ export class Net {
         this.host = String(m.host);
         this.status = 'online';
         for (const p of m.players as { id: string; name: string; outfit: string }[]) this.add(p.id, p.name, p.outfit);
+        this.sync.start(this.isHost);
         this.system(`Joined room ${m.room}. ${this.players.size ? `${this.players.size} other player(s) here.` : 'Share the room code so friends can join.'}${this.isHost ? ' You are the host: your clock sets day and night.' : ''}`);
         break;
       }
@@ -256,6 +262,15 @@ export class Net {
         }
         break;
       }
+      case 'w':
+        if (this.sync.ready) this.sync.apply(m.ops as WorldOp[]);
+        break;
+      case 'wreq':
+        if (this.isHost) this.send({ t: 'wsnap', to: m.from, ops: this.sync.snapshot() });
+        break;
+      case 'wsnap':
+        this.sync.applySnapshot(m.ops as WorldOp[]);
+        break;
       case 'host':
         this.host = String(m.id);
         if (this.isHost) this.system('You are now the host.');
@@ -364,6 +379,7 @@ export class Net {
   // ------------------------------------------------------------------ per frame
   update(dt: number) {
     if (!this.online) return;
+    this.sync.update(dt);
     // Outgoing state at ~12 Hz.
     this.sendTimer -= dt;
     if (this.sendTimer <= 0) {

@@ -620,7 +620,12 @@ export class GrowLamp extends Station {
     return { on: this.on };
   }
   load(d: Record<string, unknown>) {
-    if (d.on === false) this.interact();
+    const on = d.on !== false;
+    if (on !== this.on) {
+      this.on = on;
+      this.bulb.emissiveIntensity = on ? 3 : 0;
+      this.glow.intensity = on ? 6 : 0;
+    }
   }
 }
 

@@ -202,8 +202,19 @@ server.on('upgrade', (req, sock) => {
       case 'time':
         if (room.host === id) broadcast(room, { t: 'time', day: m.day, minutes: m.minutes }, id);
         break;
+      case 'w':
+        // Shared-world change: everyone else applies it.
+        broadcast(room, { t: 'w', ops: m.ops }, id);
+        break;
+      case 'wreq': {
+        // A newcomer asks the host for the current world.
+        const host = room.players.get(room.host);
+        if (host && host.id !== id) host.ws.send({ t: 'wreq', from: id });
+        break;
+      }
       case 'trade':
       case 'trade-reply':
+      case 'wsnap':
       case 'fx': {
         const to = room.players.get(m.to);
         if (to) to.ws.send({ ...m, from: id, name: me.name });

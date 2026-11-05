@@ -395,7 +395,8 @@ export class Game implements UIHost {
       hotbar: this.hotbar.selected,
       variants: { list: [...this.variants.variants.values()], names: [...this.variants.names] },
       properties: this.properties.toJSON(),
-      production: this.production.save(),
+      // While visiting someone else's world, your save keeps your own equipment.
+      production: this.net.online ? this.net.sync.saveData() : this.production.save(),
       customers: this.customers.toJSON(),
       market: this.market.toJSON(),
       state: this.state.toJSON(),
