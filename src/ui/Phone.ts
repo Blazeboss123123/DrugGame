@@ -316,7 +316,7 @@ export class Phone {
         const n = s.net;
         if (!n.online) html += `<p class="empty">Not connected. Open Multiplayer from the pause menu or title screen to join a room with friends.${n.error ? `<br><br>${esc(n.error)}` : ''}</p><div class="emp-actions pad"><button class="pbtn ok" data-mp="1">Multiplayer…</button></div>`;
         else {
-          html += `<div class="contact"><div class="contact-top"><strong>Room ${esc(n.room)}</strong><span>${n.players.size + 1} player(s)</span></div><span class="muted">You are ${esc(n.name)}${n.isHost ? ' (host)' : ''}</span></div>`;
+          html += `<div class="contact"><div class="contact-top"><strong>Room ${esc(n.room)}</strong><span>${n.players.size + 1} player(s)</span></div><span class="muted">You are ${esc(n.name)}${n.isHost ? ' (host)' : ''}</span><p class="small">${n.isHost ? 'Everyone here is playing in your world: your equipment, plants and storage.' : "You're playing in the host's world. Your own equipment and plants are saved and come back when you leave, or if you become host."}</p></div>`;
           for (const p of n.players.values()) html += `<div class="contact"><div class="contact-top"><strong>${esc(p.name)}</strong><span>${p.state ? `${Math.round(p.pos.distanceTo(s.player.position))} m` : '…'}</span></div><div class="emp-actions"><button class="pbtn" data-trade="${p.id}">Trade</button></div></div>`;
           html += '<div class="mk-group">Chat</div><div class="bubbles">';
           for (const c of n.chat.slice(-30)) html += c.system ? `<div class="sysline">${esc(c.text)}</div>` : `<div class="bubble ${c.name === n.name ? 'me' : 'them'}"><strong>${esc(c.name)}</strong><div>${esc(c.text)}</div></div>`;

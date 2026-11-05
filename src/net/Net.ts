@@ -263,7 +263,9 @@ export class Net {
         break;
       }
       case 'w':
-        if (this.sync.ready) this.sync.apply(m.ops as WorldOp[]);
+        // A reset replaces the whole world (the host changed); otherwise it's an incremental change.
+        if (m.reset) this.sync.applySnapshot(m.ops as WorldOp[]);
+        else if (this.sync.ready) this.sync.apply(m.ops as WorldOp[]);
         break;
       case 'wreq':
         if (this.isHost) this.send({ t: 'wsnap', to: m.from, ops: this.sync.snapshot() });
@@ -273,7 +275,11 @@ export class Net {
         break;
       case 'host':
         this.host = String(m.id);
-        if (this.isHost) this.system('You are now the host.');
+        if (this.isHost) {
+          this.system('You are now the host. The room now plays in your world.');
+          const ops = this.sync.becomeHost();
+          if (ops) this.send({ t: 'w', ops, reset: true });
+        }
         break;
       case 'states': {
         const s = m.s as Record<string, NetState>;

@@ -97,6 +97,22 @@ export class WorldSync {
     this.known.clear();
   }
 
+  /**
+   * The previous host left and you took over. If you were visiting their world, your own comes back
+   * and everyone still in the room switches to it (returns ops to broadcast as a reset, or null).
+   */
+  becomeHost(): WorldOp[] | null {
+    if (!this.stash) return null;
+    this.applying = true;
+    this.svc.production.load(this.stash as never);
+    this.applying = false;
+    this.stash = null;
+    this.snapshotKnown();
+    this.ready = true;
+    this.svc.ui.toast("You're the host now, so the room is playing in your world. Your own equipment and plants are back.", 'good');
+    return this.snapshot();
+  }
+
   /** Full world for a newcomer (host only). */
   snapshot(): WorldOp[] {
     const ops: WorldOp[] = [];
@@ -111,7 +127,8 @@ export class WorldSync {
 
   /** Guest receives the host's world: put your own aside and mirror theirs exactly. */
   applySnapshot(ops: WorldOp[]) {
-    if (!this.stash) this.stash = this.svc.production.save();
+    const first = !this.stash;
+    if (first) this.stash = this.svc.production.save();
     this.applying = true;
     const keep = new Set(ops.filter((o): o is StationOp => o.k === 'put').map((o) => `${o.site}|${o.key}`));
     for (const [id, site] of this.svc.production.sites)
@@ -120,7 +137,12 @@ export class WorldSync {
     this.apply(ops);
     this.snapshotKnown();
     this.ready = true;
-    this.svc.ui.toast("You're in the host's world: their equipment, plants and storage are shared with you.", 'good');
+    this.svc.ui.toast(
+      first
+        ? "You're playing in the host's world, so you'll see their equipment and plants. Yours are saved and come back when you leave the room (or if you become host)."
+        : 'The host changed, so the room switched to their world.',
+      'info',
+    );
   }
 
   apply(ops: WorldOp[]) {

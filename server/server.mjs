@@ -204,7 +204,7 @@ server.on('upgrade', (req, sock) => {
         break;
       case 'w':
         // Shared-world change: everyone else applies it.
-        broadcast(room, { t: 'w', ops: m.ops }, id);
+        broadcast(room, { t: 'w', ops: m.ops, reset: m.reset === true && room.host === id }, id);
         break;
       case 'wreq': {
         // A newcomer asks the host for the current world.
