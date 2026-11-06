@@ -82,11 +82,12 @@ export interface TreeGeo {
 }
 
 /** A tall stylised conifer: tiers of drooping, jagged needle skirts around a reddish trunk. */
-export function pineGeometry(seed: number): TreeGeo {
+/** `lod` builds a lighter version for distant trees (fewer, broader shapes; same silhouette). */
+export function pineGeometry(seed: number, lod = false): TreeGeo {
   const rng = new Rng(seed);
   const tb = builder();
   const height = rng.range(8.5, 10.5);
-  trunk(tb, height, 0.34, 0.07, 9, [rng.range(-0.02, 0.02), rng.range(-0.02, 0.02)]);
+  trunk(tb, height, 0.34, 0.07, lod ? 5 : 9, [rng.range(-0.02, 0.02), rng.range(-0.02, 0.02)]);
   const fb = builder();
   const tiers = rng.int(7, 9);
   for (let k = 0; k < tiers; k++) {
@@ -94,7 +95,7 @@ export function pineGeometry(seed: number): TreeGeo {
     const y = 1.9 + t * (height - 2.6);
     const r = (2.5 - t * 2.0) * rng.range(0.9, 1.1);
     const h = 1.35 - t * 0.55;
-    const spokes = Math.round(13 - t * 6);
+    const spokes = lod ? Math.max(5, Math.round((13 - t * 6) * 0.55)) : Math.round(13 - t * 6);
     const rot = rng.range(0, Math.PI * 2);
     const C: Vert = { p: [0, y + h, 0], n: [0, 1, 0], uv: [0.5, 0.05], c: 0.32 };
     const U: Vert = { p: [0, y + h * 0.15, 0], n: [0, -1, 0], uv: [0.5, 0.05], c: 0.18 };
@@ -116,6 +117,7 @@ export function pineGeometry(seed: number): TreeGeo {
       const mid: V3 = norm([notch.p[0], 0.8, notch.p[2]]);
       tri(fb, C, tip, notch, mid);
       tri(fb, C, notch, next, mid);
+      if (lod) continue; // seen from afar the underside never shows
       // Underside, darker, closes the skirt so it reads as solid from below.
       const down: V3 = [notch.p[0] * 0.3, -1, notch.p[2] * 0.3];
       const ut: Vert = { ...tip, n: norm([tip.p[0], -0.4, tip.p[2]]), c: 0.35 };
@@ -129,11 +131,11 @@ export function pineGeometry(seed: number): TreeGeo {
 }
 
 /** A broadleaf tree: forked trunk with clusters of alpha-tested leaf cards and soft spherical normals. */
-export function broadleafGeometry(seed: number): TreeGeo {
+export function broadleafGeometry(seed: number, lod = false): TreeGeo {
   const rng = new Rng(seed);
   const tb = builder();
   const th = rng.range(2.8, 3.6);
-  trunk(tb, th + 0.8, 0.3, 0.14, 8, [rng.range(-0.03, 0.03), rng.range(-0.03, 0.03)]);
+  trunk(tb, th + 0.8, 0.3, 0.14, lod ? 5 : 8, [rng.range(-0.03, 0.03), rng.range(-0.03, 0.03)]);
   const center: V3 = [0, th + 1.9, 0];
   const clusters: { c: V3; r: number }[] = [{ c: [0, th + 2.2, 0], r: rng.range(1.8, 2.2) }];
   const n = rng.int(4, 6);
@@ -143,7 +145,7 @@ export function broadleafGeometry(seed: number): TreeGeo {
     clusters.push({ c: [Math.cos(a) * d, th + rng.range(1.0, 2.8), Math.sin(a) * d], r: rng.range(1.1, 1.5) });
   }
   // Branches from the trunk top to each outer cluster.
-  for (const cl of clusters.slice(1)) {
+  for (const cl of lod ? [] : clusters.slice(1)) {
     const seg = 5;
     const sx = 0, sy = th + 0.4, sz = 0;
     const ex = cl.c[0] * 0.8, ey = cl.c[1] - 0.2, ez = cl.c[2] * 0.8;
@@ -174,7 +176,8 @@ export function broadleafGeometry(seed: number): TreeGeo {
   const lo = th + 0.2;
   const hi = th + 4.6;
   for (const cl of clusters) {
-    const cards = Math.round(26 * cl.r);
+    // Distant trees: a third of the cards, each bigger, so the crown covers the same area.
+    const cards = Math.round((lod ? 9 : 26) * cl.r);
     for (let i = 0; i < cards; i++) {
       // Point on the cluster's surface, biased upward and outward.
       let dx = rng.range(-1, 1), dy = rng.range(-0.6, 1), dz = rng.range(-1, 1);
@@ -184,7 +187,7 @@ export function broadleafGeometry(seed: number): TreeGeo {
       dz /= l;
       const rr = cl.r * rng.range(0.55, 0.95);
       const p: V3 = [cl.c[0] + dx * rr, cl.c[1] + dy * rr * 0.8, cl.c[2] + dz * rr];
-      const size = rng.range(1.0, 1.5) * (0.8 + cl.r * 0.15);
+      const size = rng.range(1.0, 1.5) * (0.8 + cl.r * 0.15) * (lod ? 1.55 : 1);
       // Card faces outward from the cluster with a random roll.
       const f = norm([dx, dy * 0.6 + 0.2, dz]);
       let ax = norm([-f[2], 0, f[0]]);

@@ -15,6 +15,7 @@ import { buildProps, buildRooftop, type PropsResult } from './Props';
 import { buildRoads, waterNormals } from './Roads';
 import { bakeTerrain } from './TerrainGen';
 import { KIT_BUILDINGS, KitAssets, type KitName } from './KitAssets';
+import { InstanceCuller } from './InstanceCuller';
 import { Rng } from '../core/math';
 import { X_LINES, Z_LINES } from './CityPlan';
 import { buildTerrain } from './TerrainMesh';
@@ -117,6 +118,7 @@ export class World {
     await nextFrame();
     this.props = buildProps(this.content, this.hm, physics);
     scene.add(this.props.group);
+    this.culler.manage(this.props.group);
     this.nightMats.push(...this.props.nightMaterials);
 
     progress(0.92, 'Growing grass');
@@ -126,6 +128,7 @@ export class World {
     this.grassWeight = null;
     this.grass = new GrassField(this.hm, mask, this.surfaces);
     this.grass.setQuality(this.svc.settings.graphics);
+    this.grass.group.userData.noCull = true;
     scene.add(this.grass.group);
 
     // Initialise the query pipeline so ray casts see every static collider immediately.
@@ -172,6 +175,8 @@ export class World {
   }
 
   kitLoaded = false;
+  /** Per-instance culling for trees, street props and MegaKit buildings. */
+  readonly culler = new InstanceCuller();
   readonly propertyPads = new Map<string, Pad>();
 
   /** Swaps some downtown and Market Row plots for MegaKit buildings, and adds kit street props. */
@@ -182,6 +187,7 @@ export class World {
       if (!placements.has(n)) placements.set(n, []);
       placements.get(n)!.push(m);
     };
+    const proxies: THREE.Matrix4[] = [];
     const models = KIT_BUILDINGS.map((n) => kit.models.get(n)!).sort((a, b) => b.box.max.x - b.box.min.x - (a.box.max.x - a.box.min.x));
     for (const s of this.content.buildings) {
       if (!((s.kind === 'tower' || s.kind === 'retail') && (s.facing === 'n' || s.facing === 's'))) continue;
@@ -208,6 +214,8 @@ export class World {
       const hz = (b.max.z - b.min.z) / 2;
       const h = b.max.y;
       this.svc.physics.box(wx, y + h / 2 - 0.5, wz, hx, h / 2 + 0.5, hz, 0, 'concrete');
+      // Shadow stand-in: a plain box a little inside the facade (so it never shades the facade itself).
+      proxies.push(new THREE.Matrix4().compose(new THREE.Vector3(wx, y + (h - 0.6) / 2, wz), new THREE.Quaternion(), new THREE.Vector3(Math.max(1, hx * 2 - 1.2), h - 0.6, Math.max(1, hz * 2 - 1.2))));
       s.w = hx * 2;
       s.d = hz * 2;
       s.x = wx;
@@ -228,7 +236,24 @@ export class World {
       add('Prop_Bollard', new THREE.Matrix4().setPosition(x, y, z));
       this.svc.physics.cylinder(x, y + 0.45, z, 0.45, 0.11);
     }
-    for (const [n, list] of placements) this.svc.scene.add(kit.instance(n, list, n !== 'Prop_ManholeCover'));
+    // MegaKit towers are very detailed (tens of thousands of triangles each): drawing that detail again
+    // into the shadow map is wasted work, so a plain box casts their shadow instead.
+    if (proxies.length) {
+      const mat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+      const shadow = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, proxies.length);
+      proxies.forEach((m, i) => shadow.setMatrixAt(i, m));
+      shadow.castShadow = true;
+      shadow.receiveShadow = false;
+      shadow.name = 'kit-shadow-proxies';
+      shadow.computeBoundingSphere();
+      this.svc.scene.add(shadow);
+    }
+    for (const [n, list] of placements) {
+      const building = !n.startsWith('Prop_');
+      const g = kit.instance(n, list, !building && n !== 'Prop_ManholeCover');
+      this.svc.scene.add(g);
+      this.culler.manage(g);
+    }
   }
 
   get currentDistrict(): District | null {

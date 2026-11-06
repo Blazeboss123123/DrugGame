@@ -30,6 +30,8 @@ import { SAVE_VERSION, SaveSystem, type SaveData, type SaveSlotInfo } from '../s
 import type { CheatAction } from '../ui/Panels';
 import { UI, type UIHost } from '../ui/UI';
 import { Vehicles } from '../vehicles/Vehicles';
+import { LightPool } from '../environment/LightPool';
+import { DetailCuller } from '../world/DetailCuller';
 import { STARTER } from '../world/CityGenerator';
 import { Z_LINES, bridgeSpan, riverX } from '../world/CityPlan';
 import { World } from '../world/World';
@@ -42,6 +44,9 @@ import { loadSettings, saveSettings } from './Settings';
 import { TimeOfDay } from './TimeOfDay';
 
 type Mode = 'loading' | 'title' | 'playing' | 'paused' | 'modal';
+/** Real point lights in the pool per graphics level (the rest wait their turn). */
+const LIGHTS = { low: 2, high: 4, ultra: 6 } as const;
+
 const HOTBAR_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 
 /** Police curfew: 23:00 to 05:00. */
@@ -82,6 +87,8 @@ export class Game implements UIHost {
   properties!: Properties;
   employees!: Employees;
   vehicles!: Vehicles;
+  lights?: LightPool;
+  detail?: DetailCuller;
   net!: Net;
   peds!: Pedestrians;
   particles!: Particles;
@@ -112,7 +119,8 @@ export class Game implements UIHost {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Soft (many-tap) shadow filtering only on Ultra; High uses the cheaper PCF filter.
+    this.renderer.shadowMap.type = this.settings.graphics === 'ultra' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     this.root.insertBefore(this.renderer.domElement, this.root.firstChild);
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -191,6 +199,9 @@ export class Game implements UIHost {
     this.newGameState();
 
     this.wireEvents();
+    this.lights = new LightPool(this.scene, LIGHTS[this.settings.graphics]);
+    this.lights.update(0, this.camera.position);
+    this.detail = new DetailCuller(this.scene);
     this.renderer.compile(this.scene, this.camera);
     this.mode = 'title';
     this.titleSaves = await this.saves.list();
@@ -349,6 +360,9 @@ export class Game implements UIHost {
     // Guests run at the host's clock speed.
     if (!this.net?.online || this.net.isHost) this.time.setDayLength(this.settings.dayLength);
     this.postfx.apply();
+    this.lights?.resize(LIGHTS[this.settings.graphics]);
+    const shadowType = this.settings.graphics === 'ultra' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+    if (this.renderer.shadowMap.type !== shadowType) this.renderer.shadowMap.type = shadowType;
     this.sky.applyShadowQuality();
     this.world.grass?.setQuality(this.settings.graphics);
     this.resize();
@@ -795,7 +809,9 @@ export class Game implements UIHost {
   private resize() {
     const w = this.root.clientWidth || window.innerWidth;
     const h = this.root.clientHeight || window.innerHeight;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * this.settings.renderScale);
+    // Retina screens render up to 4× the pixels; cap the ratio per quality level (Ultra keeps 2×).
+    const cap = this.settings.graphics === 'ultra' ? 2 : this.settings.graphics === 'high' ? 1.5 : 1;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, cap) * this.settings.renderScale);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -882,6 +898,10 @@ export class Game implements UIHost {
     this.sky.update(this.time, focus, this.indoorBlend, dt, this.camera);
     this.postfx.update(this.sky.night, this.sky.dusk);
     this.world.update(dt, this.sky.night, this.player.position, this.camera.position);
+    this.world.culler.viewDistance = this.settings.viewDistance;
+    this.world.culler.update(dt, this.camera, this.player.position);
+    this.detail?.update(dt, this.camera.position);
+    this.lights?.update(dt, this.camera.position);
     const m = this.time.minutes;
     const simDt = playing || this.externalDrive ? dt : 0;
     const curfew = isCurfew(m);

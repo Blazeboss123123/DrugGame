@@ -58,6 +58,11 @@ class RemotePlayer implements Interactable {
   tag: THREE.Sprite;
   car: ReturnType<typeof makeVehicleMesh> | null = null;
   carKey = '';
+  /** Car smoothing: last network position, its arrival time and the estimated velocity. */
+  carLast = new THREE.Vector3();
+  carAt = 0;
+  carVel = new THREE.Vector3();
+  carYaw = 0;
   body: import('../physics/Physics').RigidBody;
   phase = 0;
   constructor(
@@ -388,7 +393,18 @@ export class Net {
         const s = m.s as Record<string, NetState>;
         for (const [id, st] of Object.entries(s)) {
           const p = this.players.get(id);
-          if (p) p.state = st;
+          if (!p) continue;
+          if (st.v) {
+            // Estimate the car's velocity so it can be drawn slightly ahead between updates.
+            const now = performance.now();
+            const np = new THREE.Vector3(...st.v.p);
+            const dtS = (now - p.carAt) / 1000;
+            if (p.state?.v && dtS > 0.02 && dtS < 0.5) p.carVel.lerp(np.clone().sub(p.carLast).divideScalar(dtS), 0.6);
+            else p.carVel.set(0, 0, 0);
+            p.carLast.copy(np);
+            p.carAt = now;
+          }
+          p.state = st;
         }
         break;
       }
@@ -560,20 +576,43 @@ export class Net {
         const key = `${st.v.type}:${st.v.c}`;
         if (p.carKey !== key) {
           if (p.car) this.svc.scene.remove(p.car.group);
-          p.car = makeVehicleMesh(st.v.type, st.v.c);
+          p.car = makeVehicleMesh(st.v.type, st.v.c, true);
           p.carKey = key;
           this.svc.scene.add(p.car.group);
+          p.car.group.position.set(...st.v.p);
+          p.carYaw = st.v.yaw;
         }
         const g = p.car!.group;
-        g.position.lerp(new THREE.Vector3(...st.v.p), p.car && g.position.lengthSq() ? k : 1);
+        // Draw where the car is now (last update + velocity × time since), easing towards it.
+        const ahead = Math.min(0.25, (performance.now() - p.carAt) / 1000);
+        _v.copy(p.carLast).addScaledVector(p.carVel, ahead);
+        if (g.position.distanceTo(_v) > 12) g.position.copy(_v);
+        else g.position.lerp(_v, 1 - Math.exp(-18 * dt));
+        let dy = st.v.yaw - p.carYaw;
+        dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+        p.carYaw += dy * (1 - Math.exp(-14 * dt));
         g.rotation.set(0, 0, 0);
-        g.rotateY(st.v.yaw);
+        g.rotateY(p.carYaw);
         g.rotateZ(st.v.pitch);
         g.rotateX(st.v.roll);
+        g.updateMatrixWorld();
         p.pos.copy(g.position);
-        if (p.char) {
+        // The driver, seated behind the wheel and visible through the windows.
+        const dist = g.position.distanceTo(cam);
+        if (dist < 90 && this.pool.ready && !p.char) {
+          p.char = this.pool.acquire(p.outfit, p);
+          p.char?.setLook({ skin: 0xd9a47e, hair: 0x2b1d14, hue: 0 });
+        } else if (dist > 110 && p.char) {
           this.pool.release(p.char);
           p.char = null;
+        }
+        if (p.char) {
+          const seat = SEATS[st.v.type] ?? SEATS.hatch;
+          p.char.sit = 1;
+          p.char.root.position.copy(g.localToWorld(_v.set(seat.x, seat.y - p.char.hipHeight, seat.z)));
+          p.char.root.quaternion.copy(g.quaternion).multiply(_q.setFromAxisAngle(_up, Math.PI / 2));
+          p.char.play('Idle', 0.2);
+          p.char.update(dt);
         }
         this.far.hide(p.slot);
         p.body.setNextKinematicTranslation({ x: 0, y: -900, z: 0 });
@@ -584,6 +623,10 @@ export class Net {
         this.svc.scene.remove(p.car.group);
         p.car = null;
         p.carKey = '';
+        if (p.char) {
+          p.char.sit = 0;
+          p.char.root.rotation.set(0, p.yaw, 0);
+        }
       }
       const target = new THREE.Vector3(...st.p);
       if (p.pos.distanceTo(target) > 8) p.pos.copy(target);
@@ -616,3 +659,12 @@ export class Net {
 }
 
 const round = (v: number) => Math.round(v * 100) / 100;
+const _v = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _up = new THREE.Vector3(0, 1, 0);
+/** Driver's seat in car space (+x forward, +z right): hip position for each body style. */
+const SEATS: Record<string, { x: number; y: number; z: number }> = {
+  hatch: { x: 0.05, y: 0.9, z: 0.12 },
+  coupe: { x: -0.15, y: 0.62, z: 0.12 },
+  van: { x: 1.15, y: 1.15, z: 0.25 },
+};

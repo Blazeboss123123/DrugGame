@@ -25,10 +25,13 @@ export const PAINTS = [0x8f2b2b, 0x2b3f63, 0xd7d4cc, 0x1d1f22, 0x30503f, 0xc8642
 const tmp = new THREE.Vector3();
 
 /** Builds a car mesh: body, glass, lights, and four wheels you can spin and steer. */
-export function makeVehicleMesh(type: VehicleType, color: number): { group: THREE.Group; wheels: THREE.Object3D[]; body: THREE.MeshStandardMaterial; lights: THREE.MeshStandardMaterial } {
+export function makeVehicleMesh(type: VehicleType, color: number, clearGlass = false): { group: THREE.Group; wheels: THREE.Object3D[]; body: THREE.MeshStandardMaterial; lights: THREE.MeshStandardMaterial } {
   const g = new THREE.Group();
   const body = new THREE.MeshStandardMaterial({ color, roughness: 0.32, metalness: 0.55 });
-  const glass = new THREE.MeshStandardMaterial({ color: 0x18222b, roughness: 0.08, metalness: 0.7 });
+  // Other players' cars get see-through windows so you can see who's driving.
+  const glass = clearGlass
+    ? new THREE.MeshStandardMaterial({ color: 0x1c2a33, roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.32, depthWrite: false })
+    : new THREE.MeshStandardMaterial({ color: 0x18222b, roughness: 0.08, metalness: 0.7 });
   const trim = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.7 });
   const lights = new THREE.MeshStandardMaterial({ color: 0xf2efe4, emissive: 0xfff2d0, emissiveIntensity: 0 });
   const tail = new THREE.MeshStandardMaterial({ color: 0x7a1010, emissive: 0xff2010, emissiveIntensity: 0.2 });

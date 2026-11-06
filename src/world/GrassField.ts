@@ -163,7 +163,7 @@ export class GrassField {
     this.blades = this.flowers = null;
     if (q === 'low') return;
     const patch = q === 'ultra' ? 56 : 40;
-    const density = q === 'ultra' ? 24 : 20; // tufts per square metre (five blades each)
+    const density = q === 'ultra' ? 24 : 16; // tufts per square metre (five blades each)
     this.uniforms.uPatch.value = patch;
     this.blades = this.makeBlades(Math.round(patch * patch * density), patch);
     this.flowers = this.makeFlowers(Math.round(patch * patch * 2.2), patch);

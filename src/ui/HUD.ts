@@ -6,7 +6,21 @@ import { iconFor, stackName } from './Icons';
 import { Minimap } from './Minimap';
 
 /** On-screen heads-up display: crosshair, prompt, objective, clock, compass, location and toasts. */
+/** Only writes to the page when the text actually changed. */
+function setText(el: HTMLElement, text: string) {
+  if (el.textContent !== text) el.textContent = text;
+}
+const htmlCache = new WeakMap<HTMLElement, string>();
+function setHtml(el: HTMLElement, html: string) {
+  if (htmlCache.get(el) === html) return;
+  htmlCache.set(el, html);
+  el.innerHTML = html;
+}
+
 export class HUD {
+  private slowTimer = 0;
+  private wpArrow?: HTMLElement;
+  private wpText?: HTMLElement;
   private root: HTMLElement;
   private crosshair: HTMLElement;
   private prompt: HTMLElement;
@@ -166,7 +180,7 @@ export class HUD {
   renderChat(lines: { name: string; text: string; at: number; system?: boolean }[]) {
     const now = performance.now();
     const recent = lines.slice(-6);
-    this.chatFeed.innerHTML = recent
+    setHtml(this.chatFeed, recent
       .map((l) => {
         const age = (now - l.at) / 1000;
         const op = this.chatInput.hidden ? Math.max(0, Math.min(1, (16 - age) / 3)) : 1;
@@ -174,9 +188,9 @@ export class HUD {
         t.textContent = l.text;
         const n = document.createElement('div');
         n.textContent = l.name;
-        return `<div class="cl${l.system ? ' sys' : ''}" style="opacity:${op}">${l.system ? '' : `<strong>${n.innerHTML}</strong> `}${t.innerHTML}</div>`;
+        return `<div class="cl${l.system ? ' sys' : ''}" style="opacity:${op.toFixed(2)}">${l.system ? '' : `<strong>${n.innerHTML}</strong> `}${t.innerHTML}</div>`;
       })
-      .join('');
+      .join(''));
     this.chatSeen = lines.length;
   }
 
@@ -279,17 +293,24 @@ export class HUD {
   }
 
   update(dt: number, x: number, z: number, district: District | null) {
-    this.time.textContent = this.host.time.label;
-    this.day.textContent = `${this.host.time.weekday} · Day ${this.host.time.day}`;
-    const street = streetNameAt(x, z);
-    this.street.textContent = street ?? (district ? DISTRICTS[district].name : '');
-    this.area.textContent = district ? `${DISTRICTS[district].name} · ${DISTRICTS[district].kind}` : '';
+    // Text and lists refresh 8 times a second, and only touch the page when something changed:
+    // rewriting the DOM every frame forces the browser to re-lay-out the HUD 60+ times a second.
+    this.slowTimer -= dt;
+    const slow = this.slowTimer <= 0;
+    if (slow) {
+      this.slowTimer = 0.125;
+      setText(this.time, this.host.time.label);
+      setText(this.day, `${this.host.time.weekday} · Day ${this.host.time.day}`);
+      const street = streetNameAt(x, z);
+      setText(this.street, street ?? (district ? DISTRICTS[district].name : ''));
+      setText(this.area, district ? `${DISTRICTS[district].name} · ${DISTRICTS[district].kind}` : '');
+    }
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.banner.classList.remove('show');
     }
     // Progress labels (walk distance) change continuously.
-    const cur = this.host.state.current();
+    const cur = slow ? this.host.state.current() : null;
     if (cur?.progress) this.refreshObjective();
     if (this.notifyTimer > 0) {
       this.notifyTimer -= dt;
@@ -299,15 +320,15 @@ export class HUD {
     if (svc) {
       const deals = svc.customers.deals.filter((d) => d.status === 'accepted');
       this.dealTrack.hidden = !deals.length;
-      if (deals.length) {
-        this.dealTrack.innerHTML = deals
+      if (deals.length && slow) {
+        setHtml(this.dealTrack, deals
           .slice(0, 3)
           .map((d) => {
             const left = Math.max(0, d.expires - (svc.time.day * 1440 + svc.time.minutes));
             const dist = Math.round(Math.hypot(d.meet.x - x, d.meet.z - z));
             return `<div><span class="eyebrow">Deal</span> <strong>${svc.customers.person(d.person).name}</strong> wants ${d.units} × ${FAMILIES[d.family].name} · $${d.price}<br><span class="muted">${d.meet.name} · ${dist} m · ${Math.floor(left / 60)}h ${Math.floor(left % 60)}m left</span></div>`;
           })
-          .join('');
+          .join(''));
       }
       const wp = this.waypoint ?? (deals[0] ? { x: deals[0].meet.x, z: deals[0].meet.z } : null);
       this.wpEl.hidden = !wp;
@@ -316,20 +337,22 @@ export class HUD {
         if (this.waypoint && dist < 8) this.waypoint = null;
         const bearing = Math.atan2(wp.x - x, -(wp.z - z));
         const heading = svc.vehicles.driving ? Math.PI / 2 - svc.vehicles.driving.yaw : -svc.player.yaw;
-        (this.wpEl.querySelector('.wp-arrow') as HTMLElement).style.transform = `rotate(${bearing - heading}rad)`;
-        (this.wpEl.querySelector('.wp-text') as HTMLElement).textContent = `${this.waypoint ? 'Waypoint' : 'Deal'} · ${Math.round(dist)} m`;
+        this.wpArrow ??= this.wpEl.querySelector('.wp-arrow') as HTMLElement;
+        this.wpText ??= this.wpEl.querySelector('.wp-text') as HTMLElement;
+        this.wpArrow.style.transform = `rotate(${(bearing - heading).toFixed(3)}rad)`;
+        if (slow) setText(this.wpText, `${this.waypoint ? 'Waypoint' : 'Deal'} · ${Math.round(dist)} m`);
       }
       this.minimap?.update(dt, this.heading());
-      if (svc.net.online) this.renderChat(svc.net.chat);
+      if (svc.net.online && slow) this.renderChat(svc.net.chat);
       else if (this.chatSeen) {
-        this.chatFeed.innerHTML = '';
+        setHtml(this.chatFeed, '');
         this.chatSeen = 0;
       }
       // The pursuit banner only shows while an officer is actually after you and close by.
       const c = svc.customers.peds?.chasing;
       const cd = c ? Math.hypot(c.x - x, c.z - z) : Infinity;
       this.wanted.hidden = !(this.chase && c && cd < 70);
-      if (c && !this.wanted.hidden) this.wanted.querySelector('.wanted-text')!.textContent = `${c.name} is chasing you · ${Math.round(cd)} m`;
+      if (c && !this.wanted.hidden && slow) setText(this.wanted.querySelector('.wanted-text') as HTMLElement, `${c.name} is chasing you · ${Math.round(cd)} m`);
     }
     this.fps.hidden = !this.host.settings.showFps;
     if (this.host.settings.showFps) {

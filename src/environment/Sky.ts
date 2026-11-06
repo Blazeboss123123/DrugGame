@@ -51,6 +51,8 @@ export class Sky {
     u.rayleigh.value = 1.5;
     u.mieCoefficient.value = 0.0035;
     u.mieDirectionalG.value = 0.86;
+    // Never distance-culled (the dome is scaled up in the shader's world; its raw box is tiny).
+    this.sky.userData.noCull = true;
     scene.add(this.sky);
     this.sun.castShadow = true;
     const cam = this.sun.shadow.camera;
@@ -92,6 +94,7 @@ export class Sky {
     this.stars.renderOrder = -1;
     scene.add(this.stars);
     this.moonMesh = new THREE.Mesh(new THREE.CircleGeometry(28, 32), new THREE.MeshBasicMaterial({ color: 0xe8ecf5, fog: false, transparent: true, opacity: 0 }));
+    this.moonMesh.userData.noCull = true;
     scene.add(this.moonMesh);
   }
 

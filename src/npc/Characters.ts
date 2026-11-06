@@ -29,6 +29,11 @@ const UP_AXIS = new THREE.Vector3(0, 0, 1);
 const LOW_AXIS = new THREE.Vector3(1, 0, 0);
 const UP_ANGLE = (-135 * Math.PI) / 180;
 const LOW_ANGLE = (-120 * Math.PI) / 180;
+const SIT_AXIS = new THREE.Vector3(1, 0, 0);
+const SIT_HIP = Math.PI / 2;
+const SIT_KNEE = 0.5;
+const SIT_ARM = 0.9;
+const SIT_ELBOW = 0.5;
 
 export class CharacterLibrary {
   readonly templates = new Map<Outfit, THREE.Object3D>();
@@ -49,12 +54,21 @@ export class CharacterLibrary {
         OUTFITS.map(async (o) => {
           const g = await get(o);
           if (!g) return;
+          // Bones need world matrices before a skinned bounding sphere can be measured.
+          g.scene.updateMatrixWorld(true);
           g.scene.traverse((n: THREE.Object3D) => {
             const m = n as THREE.SkinnedMesh;
             if (m.isMesh) {
               m.castShadow = true;
               m.receiveShadow = false;
-              m.frustumCulled = false;
+              // Skip people behind the camera: a sphere around the bind pose, padded for any animation
+              // (walking, waving, sitting) so they never vanish while partly on screen.
+              if (m.isSkinnedMesh) {
+                m.computeBoundingSphere();
+                // At least 1.2 m in world units: head to toe of a standing person, with room for arms.
+                if (m.boundingSphere) m.boundingSphere.radius = Math.max(m.boundingSphere.radius * 1.6, 1.2 / (m.matrixWorld.getMaxScaleOnAxis() || 1));
+                m.frustumCulled = !!m.boundingSphere;
+              } else m.frustumCulled = false;
               const mat = m.material as THREE.MeshStandardMaterial;
               mat.roughness = 0.75;
               mat.metalness = 0;
@@ -81,6 +95,15 @@ export class CharacterInstance {
   private upper?: THREE.Bone;
   private lower?: THREE.Bone;
   private head?: THREE.Bone;
+  private legs: { up?: THREE.Bone; low?: THREE.Bone; foot?: THREE.Bone; armU?: THREE.Bone; armL?: THREE.Bone; shin: THREE.Vector3; rest: THREE.Vector3 }[] = [
+    { shin: new THREE.Vector3(), rest: new THREE.Vector3() },
+    { shin: new THREE.Vector3(), rest: new THREE.Vector3() },
+  ];
+  private feetMoved = false;
+  /** 0..1 seated pose (driving): thighs forward, knees bent, hands on the wheel. */
+  sit = 0;
+  /** Height of the hips above the feet, for seating the character. */
+  hipHeight = 0.95;
   readonly item: THREE.Mesh;
   private mats: { mat: THREE.MeshStandardMaterial; base: THREE.Color; name: string }[] = [];
   private q = new THREE.Quaternion();
@@ -106,9 +129,20 @@ export class CharacterInstance {
     }
     this.root.traverse((n: THREE.Object3D) => {
       if ((n as THREE.Bone).isBone) {
-        if (n.name === 'UpperArm.R') this.upper = n as THREE.Bone;
-        if (n.name === 'LowerArm.R') this.lower = n as THREE.Bone;
-        if (n.name === 'Head') this.head = n as THREE.Bone;
+        // Loaders strip the dot from bone names ("UpperArm.R" → "UpperArmR"), so match both.
+        const nm = n.name.replace('.', '');
+        if (nm === 'UpperArmR') this.upper = n as THREE.Bone;
+        if (nm === 'LowerArmR') this.lower = n as THREE.Bone;
+        if (nm === 'Head') this.head = n as THREE.Bone;
+        const side = nm.endsWith('L') ? 0 : nm.endsWith('R') ? 1 : -1;
+        if (side >= 0) {
+          const part = nm.slice(0, -1);
+          if (part === 'UpperLeg') this.legs[side].up = n as THREE.Bone;
+          if (part === 'LowerLeg') this.legs[side].low = n as THREE.Bone;
+          if (part === 'Foot') this.legs[side].foot = n as THREE.Bone;
+          if (part === 'UpperArm') this.legs[side].armU = n as THREE.Bone;
+          if (part === 'LowerArm') this.legs[side].armL = n as THREE.Bone;
+        }
       }
       const m = n as THREE.Mesh;
       if (m.isMesh) {
@@ -119,9 +153,16 @@ export class CharacterInstance {
         this.mats.push({ mat, base: src.color.clone(), name: src.name });
       }
     });
+    for (const l of this.legs) if (l.foot) l.rest.copy(l.foot.position);
+    const hips = this.root.getObjectByName('Hips');
+    if (hips) {
+      this.root.updateMatrixWorld(true);
+      const h = hips.getWorldPosition(new THREE.Vector3()).y - this.root.position.y;
+      if (h > 0.4 && h < 1.6) this.hipHeight = h;
+    }
     this.item = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.03), new THREE.MeshStandardMaterial({ color: 0xd9e6ea, roughness: 0.4 }));
     this.item.visible = false;
-    const wrist = this.root.getObjectByName('Wrist.R');
+    const wrist = this.root.getObjectByName('WristR') ?? this.root.getObjectByName('Wrist.R');
     (wrist ?? this.root).add(this.item);
     this.item.position.set(0, 0.08, 0.03);
   }
@@ -166,11 +207,41 @@ export class CharacterInstance {
   }
 
   update(dt: number) {
+    // Feet moved for the seated pose go back first (the animation may not key them every frame).
+    if (this.feetMoved) {
+      for (const l of this.legs) {
+        l.foot?.position.copy(l.rest);
+        l.foot?.scale.setScalar(1);
+      }
+      this.feetMoved = false;
+    }
     this.mixer.update(dt);
     // Procedural overrides on top of the animation: hand to mouth and head tilt.
     if (this.raise > 0.001 && this.upper && this.lower) {
       this.upper.quaternion.multiply(this.q.setFromAxisAngle(UP_AXIS, UP_ANGLE * this.raise));
       this.lower.quaternion.multiply(this.q.setFromAxisAngle(LOW_AXIS, LOW_ANGLE * this.raise));
+    }
+    if (this.sit > 0.001) {
+      // The feet are IK-style bones under the root, so they're carried along with the shins by hand:
+      // remember where each foot sits relative to its shin, bend the legs, then put the foot back there.
+      this.root.updateMatrixWorld(true);
+      for (const l of this.legs) if (l.low && l.foot) l.low.worldToLocal(l.foot.getWorldPosition(l.shin));
+      for (const l of this.legs) {
+        l.up?.quaternion.multiply(this.q.setFromAxisAngle(SIT_AXIS, SIT_HIP * this.sit));
+        l.low?.quaternion.multiply(this.q.setFromAxisAngle(SIT_AXIS, SIT_KNEE * this.sit));
+        l.armU?.quaternion.multiply(this.q.setFromAxisAngle(SIT_AXIS, SIT_ARM * this.sit));
+        l.armL?.quaternion.multiply(this.q.setFromAxisAngle(SIT_AXIS, SIT_ELBOW * this.sit));
+      }
+      this.root.updateMatrixWorld(true);
+      for (const l of this.legs)
+        if (l.low && l.foot && l.foot.parent) {
+          l.low.localToWorld(l.shin);
+          l.foot.position.copy(l.foot.parent.worldToLocal(l.shin));
+          // Seated in a car the feet are in the footwell, out of sight: tuck them away so a shoe
+          // never pokes through the door.
+          if (this.sit > 0.99) l.foot.scale.setScalar(0.01);
+          this.feetMoved = true;
+        }
     }
     if (this.tilt && this.head) this.head.quaternion.multiply(this.q.setFromAxisAngle(LOW_AXIS, -this.tilt));
   }
@@ -202,6 +273,7 @@ export class CharacterPool {
     inst.current = null;
     inst.raise = 0;
     inst.tilt = 0;
+    inst.sit = 0;
     inst.item.visible = false;
     this.scene.add(inst.root);
     this.live.add(inst);

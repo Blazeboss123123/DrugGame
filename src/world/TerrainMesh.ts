@@ -18,7 +18,8 @@ const TINT: Record<District, [number, number, number]> = {
 export const GRASS_TINT = new THREE.Color(0.44, 0.52, 0.35);
 
 export interface TerrainResult {
-  mesh: THREE.Mesh;
+  /** Terrain split into tiles so the parts outside the view aren't drawn. */
+  mesh: THREE.Group;
   /** Normalised grass weight per heightmap vertex (0..1), used to place grass blades. */
   grass: Float32Array;
 }
@@ -67,32 +68,70 @@ export function buildTerrain(hm: Heightmap, physics: Physics, parks: { x0: numbe
       tint.set(t, k * 3);
     }
   }
-  const idx = new Uint32Array(hm.n * hm.n * 6);
-  let p = 0;
-  for (let j = 0; j < hm.n; j++)
-    for (let i = 0; i < hm.n; i++) {
-      const a = j * V + i;
-      const b = a + 1;
-      const cc = a + V;
-      const e = cc + 1;
-      idx[p++] = a;
-      idx[p++] = cc;
-      idx[p++] = b;
-      idx[p++] = b;
-      idx[p++] = cc;
-      idx[p++] = e;
-    }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('splat', new THREE.BufferAttribute(splat, 4));
   g.setAttribute('tint', new THREE.BufferAttribute(tint, 3));
-  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  // Normals over the whole surface first (so tile edges match), then one index buffer per tile.
+  const all = new Uint32Array(hm.n * hm.n * 6);
+  let q = 0;
+  for (let j = 0; j < hm.n; j++)
+    for (let i = 0; i < hm.n; i++) {
+      const a = j * V + i;
+      all[q++] = a;
+      all[q++] = a + V;
+      all[q++] = a + 1;
+      all[q++] = a + 1;
+      all[q++] = a + V;
+      all[q++] = a + V + 1;
+    }
+  g.setIndex(new THREE.BufferAttribute(all, 1));
   g.computeVertexNormals();
-  g.computeBoundingSphere();
 
-  const mesh = new THREE.Mesh(g, terrainMaterial(surf));
-  mesh.receiveShadow = true;
+  // Tiles share the vertex buffers (uploaded once); each has its own index range and bounds,
+  // so the renderer can skip the ones behind the camera or outside the view.
+  const mesh = new THREE.Group();
   mesh.name = 'terrain';
+  const material = terrainMaterial(surf);
+  const T = 8;
+  const step = Math.ceil(hm.n / T);
+  const attrs = g.attributes;
+  for (let tj = 0; tj < T; tj++)
+    for (let ti = 0; ti < T; ti++) {
+      const j0 = tj * step;
+      const i0 = ti * step;
+      const j1 = Math.min(hm.n, j0 + step);
+      const i1 = Math.min(hm.n, i0 + step);
+      if (j1 <= j0 || i1 <= i0) continue;
+      const idx = new Uint32Array((j1 - j0) * (i1 - i0) * 6);
+      let p = 0;
+      const box = new THREE.Box3();
+      const v = new THREE.Vector3();
+      for (let j = j0; j < j1; j++)
+        for (let i = i0; i < i1; i++) {
+          const a = j * V + i;
+          idx[p++] = a;
+          idx[p++] = a + V;
+          idx[p++] = a + 1;
+          idx[p++] = a + 1;
+          idx[p++] = a + V;
+          idx[p++] = a + V + 1;
+        }
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++) {
+          const a = j * V + i;
+          box.expandByPoint(v.set(pos[a * 3], pos[a * 3 + 1], pos[a * 3 + 2]));
+        }
+      const tg = new THREE.BufferGeometry();
+      for (const name of Object.keys(attrs)) tg.setAttribute(name, attrs[name]);
+      tg.setIndex(new THREE.BufferAttribute(idx, 1));
+      tg.boundingBox = box;
+      tg.boundingSphere = box.getBoundingSphere(new THREE.Sphere());
+      const tile = new THREE.Mesh(tg, material);
+      tile.receiveShadow = true;
+      tile.name = 'terrain-tile';
+      mesh.add(tile);
+    }
 
   // Rapier heightfield: rows run along Z, columns along X, data in column-major order.
   const heights = new Float32Array(V * V);

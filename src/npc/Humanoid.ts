@@ -52,8 +52,9 @@ function eyesGeometry(): THREE.BufferGeometry {
   const white = new THREE.Color(0xf6f4ee);
   const black = new THREE.Color(0x15171a);
   for (const s of [-1, 1]) {
-    add(new THREE.SphereGeometry(0.042, 10, 8), white, s * 0.045, 0.015, 0.095);
-    add(new THREE.SphereGeometry(0.019, 8, 6), black, s * 0.045, 0.012, 0.133);
+    // Low-poly: these figures are only used at a distance, where eyes are a few pixels.
+    add(new THREE.SphereGeometry(0.042, 7, 5), white, s * 0.045, 0.015, 0.095);
+    add(new THREE.SphereGeometry(0.019, 5, 4), black, s * 0.045, 0.012, 0.133);
   }
   return mergeSimple(parts);
 }
@@ -91,6 +92,8 @@ export class HumanoidRenderer {
   private hidden = new THREE.Matrix4().makeScale(0, 0, 0);
   private c = new THREE.Color();
   private dirty = new Set<number>();
+  /** Which slots are showing someone; draws stop after the last one. */
+  private shown: Uint8Array;
   readonly group = new THREE.Group();
 
   constructor(
@@ -98,6 +101,7 @@ export class HumanoidRenderer {
     readonly capacity: number,
     castShadow = true,
   ) {
+    this.shown = new Uint8Array(capacity);
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82 });
     const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, vertexColors: true });
     // Leg with a dark shoe baked in through vertex colours (instance colour tints both).
@@ -111,17 +115,18 @@ export class HumanoidRenderer {
       [leg, legMat],
       [leg, legMat],
       [new THREE.BoxGeometry(0.42, 0.62, 0.25).translate(0, 0.31, 0), mat],
-      [new THREE.SphereGeometry(0.14, 14, 12).scale(1, 1.08, 1), mat],
+      [new THREE.SphereGeometry(0.14, 10, 8).scale(1, 1.08, 1), mat],
       [arm, mat],
       [arm, mat],
-      [new THREE.SphereGeometry(0.148, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 0.015, -0.012), mat],
+      [new THREE.SphereGeometry(0.148, 10, 5, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 0.015, -0.012), mat],
       [new THREE.BoxGeometry(0.45, 0.4, 0.28).translate(0, 0.36, 0), mat],
       [eyesGeometry(), eyeMat],
       [new THREE.BoxGeometry(0.07, 0.05, 0.1).translate(0, -0.62, 0.05), mat],
     ];
     for (const [g, m] of geos) {
       const im = new THREE.InstancedMesh(g, m, capacity);
-      im.castShadow = castShadow;
+      // Eyes are too small to show in a shadow.
+      im.castShadow = castShadow && g !== geos[8][0];
       im.receiveShadow = false;
       im.frustumCulled = false;
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -167,11 +172,14 @@ export class HumanoidRenderer {
   }
 
   hide(i: number) {
+    if (!this.shown[i] && !this.dirty.has(i)) return;
+    this.shown[i] = 0;
     for (const p of this.parts) p.setMatrixAt(i, this.hidden);
     this.dirty.add(i);
   }
 
   pose(i: number, p: Pose) {
+    this.shown[i] = 1;
     const sc = p.scale ?? 1;
     const bob = Math.abs(Math.sin(p.phase)) * 0.035 * Math.min(1, p.swing * 2);
     const shake = p.shake ?? 0;
@@ -204,7 +212,13 @@ export class HumanoidRenderer {
 
   commit() {
     if (!this.dirty.size) return;
-    for (const p of this.parts) p.instanceMatrix.needsUpdate = true;
+    // Only draw up to the last slot in use (hidden slots are zero-scaled, but still cost vertices).
+    let top = this.capacity - 1;
+    while (top >= 0 && !this.shown[top]) top--;
+    for (const p of this.parts) {
+      p.count = top + 1;
+      p.instanceMatrix.needsUpdate = true;
+    }
     this.dirty.clear();
   }
 

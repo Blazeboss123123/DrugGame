@@ -95,7 +95,7 @@ export class PostFX {
     const want = this.settings.graphics !== 'low';
     if (want && !this.composer) {
       const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: this.samples() });
       this.composer = new EffectComposer(this.renderer, rt);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
       this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.4, 0.55, 0.9);
@@ -104,9 +104,20 @@ export class PostFX {
       this.composer.addPass(this.grade);
       this.composer.addPass(new OutputPass());
     }
+    // Anti-aliasing samples follow the quality level (4× on Ultra, 2× on High).
+    if (this.composer && this.composer.renderTarget1.samples !== this.samples()) {
+      for (const t of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+        t.samples = this.samples();
+        t.dispose();
+      }
+    }
     this.enabled = want && !!this.composer;
     if (this.bloom) this.bloom.enabled = this.settings.graphics !== 'low';
     this.resize();
+  }
+
+  private samples() {
+    return this.settings.graphics === 'ultra' ? 4 : 2;
   }
 
   resize() {

@@ -264,7 +264,7 @@ export function buildProps(content: CityContent, hm: Heightmap, physics: Physics
     // HD trees: several seeded variants of each species, instanced per variant.
     const mats = treeMaterials(surf);
     const VARIANTS = 3;
-    const species: [THREE.Matrix4[], THREE.Color[], (s: number) => { trunk: THREE.BufferGeometry; foliage: THREE.BufferGeometry }, THREE.Material, THREE.Material, number][] = [
+    const species: [THREE.Matrix4[], THREE.Color[], (s: number, lod?: boolean) => { trunk: THREE.BufferGeometry; foliage: THREE.BufferGeometry }, THREE.Material, THREE.Material, number][] = [
       [broad, broadCol, broadleafGeometry, mats.broadTrunk, mats.leaves, 100],
       [pine, pineCol, pineGeometry, mats.pineTrunk, mats.needles, 200],
     ];
@@ -274,8 +274,14 @@ export function buildProps(content: CityContent, hm: Heightmap, physics: Physics
         const cs = cols.filter((_, i) => i % VARIANTS === v);
         if (!ms.length) continue;
         const geo = make(seed + v * 17);
-        add(instanced(geo.trunk, trunkMat, ms));
-        add(instanced(geo.foliage, leafMat, ms, cs));
+        // A lighter model of the same tree for the distance (picked up by the instance culler).
+        const lod = make(seed + v * 17, true);
+        const t = instanced(geo.trunk, trunkMat, ms);
+        const f = instanced(geo.foliage, leafMat, ms, cs);
+        if (t) t.userData.lod = lod.trunk;
+        if (f) f.userData.lod = lod.foliage;
+        add(t);
+        add(f);
       }
     }
   } else {
