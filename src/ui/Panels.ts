@@ -821,7 +821,7 @@ export class Panels {
 
   // ------------------------------------------------------------------ cheats
   openCheats(sections: { title: string; items: CheatAction[] }[]) {
-    const { overlay, body, close } = this.shell('Cheats', 'Press 5 to open this any time', true);
+    const { overlay, body, close } = this.shell('Cheats', 'Press 7, 8, 5 to open this · the host can turn cheats off in Settings', true);
     const out = el('pre', 'cheat-out');
     for (const sec of sections) {
       body.appendChild(el('div', 'section-label', sec.title));

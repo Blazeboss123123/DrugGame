@@ -13,6 +13,8 @@ export interface Settings {
   graphics: 'low' | 'high' | 'ultra';
   /** Real minutes per in-game day, or 'real' to follow your clock. */
   dayLength: 24 | 48 | 120 | 'real';
+  /** Cheat menu (7 → 8 → 5). When you host a world this decides it for everyone in the room. */
+  allowCheats: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showFps: false,
   graphics: 'high',
   dayLength: 24,
+  allowCheats: true,
 };
 
 const KEY = 'underworld-empire.settings.v1';

@@ -135,8 +135,12 @@ export class Net {
   private nextTid = 1;
   private far: HumanoidRenderer;
   onChange?: () => void;
+  /** Host: a guest asked to jump the clock to this hour. */
+  onTimeRequest?: (hour: number) => void;
   /** Shared equipment, plants and storage for everyone in the room. */
   readonly sync: WorldSync;
+  /** Whether the host allows cheats in this room. */
+  cheatsAllowed = true;
 
   constructor(
     private svc: Services,
@@ -159,6 +163,35 @@ export class Net {
       if (!/claude\.ai|claudeusercontent|anthropic/.test(location.host)) return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
     }
     return 'ws://localhost:8080/ws';
+  }
+
+  /** Host: send the clock to everyone right now (also after any time jump). */
+  pushTime() {
+    if (!this.isHost) return;
+    this.timeTimer = 1;
+    const t = this.svc.time;
+    this.send({ t: 'time', day: t.day, minutes: t.minutes, speed: t.speed });
+  }
+
+  /** Guest: ask the host to change everyone's time (cheat menu). */
+  requestTime(hour: number) {
+    this.send({ t: 'timeset', hour });
+  }
+
+  /** Host only: allow or block cheats for everyone in the room. */
+  setCheats(on: boolean) {
+    if (!this.isHost) return;
+    this.cheatsAllowed = on;
+    this.send({ t: 'cfg', cheats: on });
+  }
+
+  /** Sets every player's cash (yours included) to $0. Returns how many other players were hit. */
+  wipeAllMoney(): number {
+    this.svc.economy.forfeit(this.svc.economy.cash, 'Money wiped');
+    if (!this.online) return 0;
+    this.send({ t: 'wipe' });
+    this.system("You wiped everyone's money.");
+    return this.players.size;
   }
 
   /** Public worlds currently running on the server (for the world browser). */
@@ -190,7 +223,7 @@ export class Net {
       try {
         const ws = new WebSocket(`${url}?room=${encodeURIComponent(this.room)}`);
         this.ws = ws;
-        ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, outfit: this.outfit, world: opts.world, public: opts.public }));
+        ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, outfit: this.outfit, world: opts.world, public: opts.public, cheats: this.svc.settings.allowCheats }));
         ws.onmessage = (e) => {
           let m: Record<string, unknown>;
           try {
@@ -248,6 +281,8 @@ export class Net {
     }
     this.ws = null;
     this.status = 'offline';
+    // Back to your own clock speed.
+    this.svc.time.setDayLength(this.svc.settings.dayLength);
     this.onChange?.();
   }
 
@@ -274,6 +309,12 @@ export class Net {
         this.host = String(m.host);
         this.world = String(m.world ?? this.room);
         this.isPublic = m.public !== false;
+        this.cheatsAllowed = m.cheats !== false;
+        // Guests take the room's clock straight away (the host keeps its own).
+        if (String(m.id) !== String(m.host) && Number(m.day) > 0) {
+          this.svc.time.day = Number(m.day);
+          this.svc.time.minutes = Number(m.minutes) || 0;
+        }
         this.status = 'online';
         for (const p of m.players as { id: string; name: string; outfit: string }[]) this.add(p.id, p.name, p.outfit);
         this.sync.start(this.isHost);
@@ -301,6 +342,22 @@ export class Net {
         if (m.reset) this.sync.applySnapshot(m.ops as WorldOp[]);
         else if (this.sync.ready) this.sync.apply(m.ops as WorldOp[]);
         break;
+      case 'cfg': {
+        const was = this.cheatsAllowed;
+        this.cheatsAllowed = m.cheats !== false;
+        if (was !== this.cheatsAllowed) {
+          this.system(`${m.name} ${this.cheatsAllowed ? 'turned cheats on' : 'turned cheats off'} for this world.`);
+          if (!this.cheatsAllowed && !this.isHost) this.svc.ui.toast('The host turned cheats off.', 'warn');
+        }
+        this.onChange?.();
+        break;
+      }
+      case 'wipe': {
+        const lost = this.svc.economy.forfeit(this.svc.economy.cash, `Money wiped by ${m.name}`);
+        this.system(`${m.name} wiped everyone's money.`);
+        this.svc.ui.toast(`${m.name} wiped everyone's money${lost ? ` · you lost $${lost.toLocaleString()}` : ''}.`, 'warn');
+        break;
+      }
       case 'wreq':
         if (this.isHost) this.send({ t: 'wsnap', to: m.from, ops: this.sync.snapshot() });
         break;
@@ -319,6 +376,10 @@ export class Net {
         this.host = String(m.id);
         if (this.isHost) {
           this.system('You are now the host. The room now plays in your world.');
+          // Keep the room's current time, but run it at your own day length from now on.
+          const len = this.svc.settings.dayLength;
+          this.svc.time.speed = len === 'real' ? 1 / 60 : 1440 / (len * 60);
+          this.pushTime();
           const ops = this.sync.becomeHost();
           if (ops) this.send({ t: 'w', ops, reset: true });
         }
@@ -338,13 +399,26 @@ export class Net {
         this.onChange?.();
         break;
       case 'time': {
+        // The host's clock is the world's clock: same time, same speed for everyone.
+        if (this.isHost) break;
         const t = this.svc.time;
+        const sp = Number(m.speed);
+        if (sp > 0 && sp < 10) t.speed = sp;
         const mine = t.day * 1440 + t.minutes;
         const theirs = Number(m.day) * 1440 + Number(m.minutes);
-        if (Math.abs(theirs - mine) > 2) {
+        if (Number.isFinite(theirs) && Math.abs(theirs - mine) > 0.25) {
           t.day = Number(m.day);
           t.minutes = Number(m.minutes);
         }
+        break;
+      }
+      case 'timeset': {
+        // A guest used a time cheat: the host applies it for the whole room.
+        if (!this.isHost || !this.cheatsAllowed) break;
+        const h = Number(m.hour);
+        if (!(h >= 0 && h < 24)) break;
+        this.onTimeRequest?.(h);
+        this.system(`${m.name} set the time to ${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')} for everyone.`);
         break;
       }
       case 'trade': {
@@ -463,8 +537,7 @@ export class Net {
     if (this.isHost) {
       this.timeTimer -= dt;
       if (this.timeTimer <= 0) {
-        this.timeTimer = 5;
-        this.send({ t: 'time', day: this.svc.time.day, minutes: this.svc.time.minutes });
+        this.pushTime();
       }
     }
     // Trades nobody answered within a minute are returned.

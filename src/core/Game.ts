@@ -166,6 +166,7 @@ export class Game implements UIHost {
     this.placement = new Placement(svc, this.camera);
     this.employees = new Employees(svc, this.chars);
     this.net = new Net(svc, this.chars);
+    this.net.onTimeRequest = (h) => this.setHour(h);
     Object.assign(svc, {
       player: this.player,
       interaction: this.interaction,
@@ -345,7 +346,8 @@ export class Game implements UIHost {
     this.camera.fov = this.settings.fov;
     this.camera.far = Math.max(900, this.settings.viewDistance * 2);
     this.camera.updateProjectionMatrix();
-    this.time.setDayLength(this.settings.dayLength);
+    // Guests run at the host's clock speed.
+    if (!this.net?.online || this.net.isHost) this.time.setDayLength(this.settings.dayLength);
     this.postfx.apply();
     this.sky.applyShadowQuality();
     this.world.grass?.setQuality(this.settings.graphics);
@@ -378,6 +380,7 @@ export class Game implements UIHost {
         for (let m = before; m < after; m += 30) this.advanceMinutes(Math.min(30, after - m));
         this.bus.emit('objective:signal', { id: 'sleep' });
         this.bus.emit('time:slept', { day: this.time.day });
+        this.net.pushTime();
       })
       .then(() => {
         void this.saveGame(true);
@@ -471,6 +474,53 @@ export class Game implements UIHost {
   }
 
   // ------------------------------------------------------------------ cheats
+  /** Cheats follow the host's setting online, and your own setting offline. */
+  cheatsAllowed(): boolean {
+    return this.net.online ? this.net.cheatsAllowed : this.settings.allowCheats;
+  }
+
+  cheatControl() {
+    return { online: this.net.online, isHost: this.net.isHost, allowed: this.cheatsAllowed(), players: this.net.players.size };
+  }
+
+  /** From Settings: offline it's your own switch; online only the host can change it. */
+  setCheatsAllowed(on: boolean): boolean {
+    if (this.net.online && !this.net.isHost) return false;
+    this.settings.allowCheats = on;
+    saveSettings(this.settings);
+    if (this.net.online) this.net.setCheats(on);
+    return true;
+  }
+
+  /** Sets every player's cash to $0 (just yours when playing alone). */
+  wipeAllMoney(): string {
+    const others = this.net.wipeAllMoney();
+    return others ? `Wiped everyone's money (you and ${others} other player${others === 1 ? '' : 's'}).` : this.net.online ? "Wiped your money. Nobody else is in the world right now." : 'Your money is now $0.';
+  }
+
+  private cheatSeq: { key: string; at: number }[] = [];
+  /** Cheat code: press 7, then 8, then 5 (within two seconds). */
+  private checkCheatCode() {
+    const i = this.input;
+    const key = i.wasPressed('Digit7') ? '7' : i.wasPressed('Digit8') ? '8' : i.wasPressed('Digit5') ? '5' : null;
+    if (!key) return;
+    const now = performance.now();
+    if (key === '7') this.cheatSlot = this.hotbar.selected;
+    this.cheatSeq = [...this.cheatSeq.filter((k) => now - k.at < 2000), { key, at: now }].slice(-3);
+    if (this.cheatSeq.map((k) => k.key).join('') !== '785') return;
+    this.cheatSeq = [];
+    // 7 and 8 are hotbar keys: put the hotbar back where it was before the code.
+    if (this.cheatSlot !== null) this.hotbar.selected = this.cheatSlot;
+    this.cheatSlot = null;
+    if (!this.cheatsAllowed()) {
+      this.audio.play('denied');
+      this.ui.toast(this.net.online && !this.net.isHost ? 'The host has turned cheats off for this world.' : 'Cheats are turned off. Switch them on in Settings.', 'warn');
+      return;
+    }
+    this.openCheats();
+  }
+  private cheatSlot: number | null = null;
+
   openCheats() {
     const tp = (x: number, z: number, yaw = 0) => () => this.teleportTo(x, z, yaw);
     const span = bridgeSpan(Z_LINES[3]);
@@ -519,6 +569,7 @@ export class Game implements UIHost {
         title: 'Money & items',
         items: [
           { label: '+$1,000', run: () => this.economy.earn(1000, 'Cheat', false) },
+          { label: "Remove everyone's money", run: () => this.wipeAllMoney() },
           { label: '+$25,000', run: () => this.economy.earn(25000, 'Cheat', false) },
           {
             label: '+$10,000 lifetime sales (unlocks)',
@@ -664,6 +715,12 @@ export class Game implements UIHost {
         ],
       },
     ];
+    // If the host switches cheats off while the menu is open, the buttons stop working.
+    for (const s of sections)
+      for (const it of s.items) {
+        const run = it.run;
+        it.run = () => (this.cheatsAllowed() ? run() : 'Cheats were turned off by the host.');
+      }
     this.ui.panels.openCheats(sections);
   }
 
@@ -698,6 +755,7 @@ export class Game implements UIHost {
             }
             this.advanceMinutes(step);
           }
+          this.net.pushTime();
         }
         this.teleportTo(37.5, -12, Math.PI);
         this.ui.toast(text, 'warn');
@@ -708,11 +766,17 @@ export class Game implements UIHost {
       });
   }
 
-  private setHour(h: number) {
+  private setHour(h: number): string | void {
+    // Multiplayer: the host's clock is everyone's clock, so a guest's time cheat asks the host.
+    if (this.net.online && !this.net.isHost) {
+      this.net.requestTime(h);
+      return 'Time change sent to the host. Everyone’s clock will jump together.';
+    }
     const before = this.time.day * 1440 + this.time.minutes;
     this.time.skipTo(h);
     const after = this.time.day * 1440 + this.time.minutes;
     for (let m = before; m < after; m += 30) this.advanceMinutes(Math.min(30, after - m));
+    this.net.pushTime();
   }
 
   /** Teleports to the walkable surface at (x, z), found by a downward ray. */
@@ -749,11 +813,11 @@ export class Game implements UIHost {
 
   private handleKeys() {
     const i = this.input;
+    this.checkCheatCode();
     if (this.vehicles.driving) {
       if (i.wasPressed('KeyE') || i.wasPressed('KeyF')) this.vehicles.exit();
       else if (i.wasPressed('KeyM')) this.ui.phone.open();
       else if (i.wasPressed('KeyN')) this.ui.openMap();
-      else if (i.wasPressed('Digit5')) this.openCheats();
       else if (i.wasPressed('KeyT')) this.openChat();
       else if (i.wasPressed('KeyH')) this.audio.play('denied', this.vehicles.driving.pos);
       return;
@@ -764,8 +828,7 @@ export class Game implements UIHost {
     else if (i.wasPressed('KeyC')) {
       const msg = this.substances.take();
       this.ui.toast(msg, this.substances.high ? 'info' : 'warn');
-    } else if (i.wasPressed('Digit5')) this.openCheats();
-    else if (i.wasPressed('KeyT')) this.openChat();
+    } else if (i.wasPressed('KeyT')) this.openChat();
     else if (i.wasPressed('KeyR') && !this.placement.heldKind()) {
       const msg = this.player.toggleBoard();
       if (msg) this.ui.toast(msg, 'warn');

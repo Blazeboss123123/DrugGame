@@ -30,6 +30,9 @@ export interface UIHost {
   onViewPunch?: () => void;
   onShake?: (amount: number) => void;
   openMultiplayer(): void;
+  cheatControl(): { online: boolean; isHost: boolean; allowed: boolean; players: number };
+  setCheatsAllowed(on: boolean): boolean;
+  wipeAllMoney(): string;
 }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] => {
@@ -53,7 +56,7 @@ const CONTROLS: [string[], string][] = [
   [['R'], 'Skateboard'],
   [['T'], 'Chat (multiplayer)'],
   [['G'], 'Drop carried object'],
-  [['5'], 'Cheats & teleport'],
+  [['7', '8', '5'], 'Cheats & teleport (press in order)'],
   [['Esc'], 'Pause'],
 ];
 
@@ -375,6 +378,49 @@ export class UI {
       ['real', 'Real time (synced to your clock)'],
     ], () => String(st.dayLength), (v) => (st.dayLength = v === 'real' ? 'real' : (Number(v) as 24 | 48 | 120)));
     check('set-fps', 'Show frame rate', () => st.showFps, (v) => (st.showFps = v));
+    // ---- cheats: your own switch offline; the host's switch for everyone online
+    grid.appendChild(el('div', 'section-label', 'Cheats'));
+    {
+      const cc = this.host.cheatControl();
+      const row = el('div', 'setting');
+      const lab = el('label', undefined, cc.online ? (cc.isHost ? 'Allow cheats for everyone (you are host)' : 'Cheats (set by the host)') : 'Allow cheats (7 → 8 → 5)');
+      lab.htmlFor = 'set-cheats';
+      const input = el('input');
+      input.type = 'checkbox';
+      input.id = 'set-cheats';
+      input.checked = cc.online ? cc.allowed : st.allowCheats;
+      input.disabled = cc.online && !cc.isHost;
+      input.addEventListener('change', () => {
+        if (!this.host.setCheatsAllowed(input.checked)) input.checked = this.host.cheatControl().allowed;
+        this.host.playUi();
+      });
+      row.append(lab, input);
+      grid.appendChild(row);
+      if (!cc.online || cc.isHost) {
+        const wrow = el('div', 'setting');
+        const wl = el('label', undefined, cc.online ? `Remove everyone's money (${cc.players + 1} player${cc.players ? 's' : ''})` : 'Remove your money');
+        const wb = el('button', 'btn small danger', 'Wipe money');
+        wb.id = 'btn-wipe-money';
+        let armed = false;
+        wb.addEventListener('click', () => {
+          // Two clicks so it can't happen by accident.
+          if (!armed) {
+            armed = true;
+            wb.textContent = 'Click again to confirm';
+            setTimeout(() => {
+              armed = false;
+              wb.textContent = 'Wipe money';
+            }, 3000);
+            return;
+          }
+          armed = false;
+          wb.textContent = 'Done';
+          this.toast(this.host.wipeAllMoney(), 'warn');
+        });
+        wrow.append(wl, wb);
+        grid.appendChild(wrow);
+      }
+    }
     grid.appendChild(el('div', 'section-label', 'Audio'));
     slider('set-master', 'Master volume', 0, 1, 0.05, () => st.master, (v) => (st.master = v), pct);
     slider('set-sfx', 'Effects', 0, 1, 0.05, () => st.sfx, (v) => (st.sfx = v), pct);

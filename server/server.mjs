@@ -170,7 +170,7 @@ const rooms = new Map();
 function roomOf(code) {
   let r = rooms.get(code);
   if (!r) {
-    r = { players: new Map(), host: null, name: '', public: true, createdAt: Date.now(), day: 1, minutes: 0 };
+    r = { players: new Map(), host: null, name: '', public: true, createdAt: Date.now(), day: 1, minutes: 0, cheats: true };
     rooms.set(code, r);
   }
   return r;
@@ -213,10 +213,11 @@ server.on('upgrade', (req, sock) => {
           room.name = clean(m.world, 32) || `${me.name}'s world`;
           room.public = m.public !== false;
           room.createdAt = Date.now();
+          room.cheats = m.cheats !== false;
         }
         room.players.set(id, me);
         if (!room.host) room.host = id;
-        ws.send({ t: 'welcome', id, room: code, world: room.name, public: room.public, host: room.host, players: [...room.players.values()].filter((p) => p.id !== id).map((p) => ({ id: p.id, name: p.name, outfit: p.outfit })) });
+        ws.send({ t: 'welcome', id, room: code, world: room.name, public: room.public, host: room.host, cheats: room.cheats, day: room.day, minutes: room.minutes, players: [...room.players.values()].filter((p) => p.id !== id).map((p) => ({ id: p.id, name: p.name, outfit: p.outfit })) });
         broadcast(room, { t: 'join', id, name: me.name, outfit: me.outfit }, id);
         break;
       case 'st':
@@ -229,8 +230,19 @@ server.on('upgrade', (req, sock) => {
         if (room.host === id) {
           room.day = Number(m.day) || 1;
           room.minutes = Number(m.minutes) || 0;
-          broadcast(room, { t: 'time', day: m.day, minutes: m.minutes }, id);
+          broadcast(room, { t: 'time', day: m.day, minutes: m.minutes, speed: m.speed }, id);
         }
+        break;
+      case 'cfg':
+        // Host-only room settings: whether cheats are allowed for everyone.
+        if (room.host === id) {
+          room.cheats = m.cheats !== false;
+          broadcast(room, { t: 'cfg', cheats: room.cheats, name: me.name });
+        }
+        break;
+      case 'wipe':
+        // "Remove everyone's money": only while cheats are allowed (or from the host).
+        if (room.cheats || room.host === id) broadcast(room, { t: 'wipe', id, name: me.name }, id);
         break;
       case 'w':
         // Shared-world change: everyone else applies it.
@@ -244,6 +256,12 @@ server.on('upgrade', (req, sock) => {
         // Pedestrian positions come from the host only.
         if (room.host === id) broadcast(room, { t: 'peds', p: m.p }, id);
         break;
+      case 'timeset': {
+        // A guest's time cheat goes to the host, whose clock everyone follows.
+        const host = room.players.get(room.host);
+        if (host && host.id !== id && room.cheats) host.ws.send({ t: 'timeset', hour: m.hour, from: id, name: me.name });
+        break;
+      }
       case 'wreq': {
         // A newcomer asks the host for the current world.
         const host = room.players.get(room.host);

@@ -1227,3 +1227,5 @@ kbd,
 .bj-float { position: absolute; left: 50%; bottom: 40%; transform: translateX(-50%); font: 800 30px var(--mono); color: #7dffa8; text-shadow: 0 2px 8px #000; pointer-events: none; animation: bjfloat 1.4s ease-out forwards; }
 @keyframes bjfloat { from { opacity: 0; transform: translate(-50%, 20px) scale(0.8); } 20% { opacity: 1; transform: translate(-50%, 0) scale(1.1); } to { opacity: 0; transform: translate(-50%, -60px) scale(1); } }
 @keyframes bjpop { from { transform: scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
+.btn.danger { background: #8a2a20; border-color: #c4483a; color: #fff; }
+.btn.danger:hover { background: #a8352a; }
