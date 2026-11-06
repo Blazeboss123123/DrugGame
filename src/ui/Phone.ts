@@ -1,6 +1,8 @@
 import type { Services } from '../core/Services';
 import { ROLES, SHIFTS, type Role, type Shift } from '../employees/Employees';
-import { DELIVERY_MINUTES } from '../economy/Market';
+import { DELIVERY_MINUTES, DROP_MINUTES, SUPPLIER } from '../economy/Market';
+import { meetTime, type MeetProposal } from '../business/Customers';
+import type { Family } from '../products/Catalog';
 import { GANGS, GANG_IDS } from '../business/Rivals';
 import { UPGRADES } from '../business/Upgrades';
 import { EFFECTS, FAMILIES, INGREDIENTS, ITEMS, QUALITY_NAMES, unitValue } from '../products/Catalog';
@@ -38,6 +40,9 @@ export class Phone {
   private thread = '';
   private screen!: HTMLElement;
   private cart = new Map<string, number>();
+  private seedCart = new Map<string, number>();
+  /** The arrange-a-meet form, kept across refreshes while it's open. */
+  private meet: { idx: number; family: Family; units: number; place: number; at: number; price: number; priced: boolean } | null = null;
   private deliverTo = 'home';
   private paint = PAINTS[0];
   private timer = 0;
@@ -81,7 +86,7 @@ export class Phone {
       if (live || msgChanged) {
         const st = this.screen.scrollTop;
         const focus = document.activeElement?.id;
-        if (focus === 'chat-in' || focus === 'counter-in') return;
+        if (focus === 'chat-in' || focus === 'counter-in' || focus?.startsWith('meet-')) return;
         this.render();
         this.screen.scrollTop = st;
       }
@@ -102,6 +107,55 @@ export class Phone {
     return `<div class="app-head"><button class="back" data-go="${back}">‹</button><h3>${title}</h3><span>$${this.svc.economy.cash.toLocaleString()}</span></div>${this.flash ? `<div class="flash">${esc(this.flash)}</div>` : ''}`;
   }
 
+  /** Families you can actually offer (ones you've made), the customer's favourite first. */
+  private meetFamilies(fav: Family): Family[] {
+    const have = [...new Set([...this.svc.variants.variants.values()].map((v) => v.family))] as Family[];
+    const list = have.length ? have : [fav];
+    return [...new Set([list.includes(fav) ? fav : list[0], ...list])];
+  }
+
+  /** Places to meet: your map waypoint (if set), the customer's neighbourhood corners, then landmarks. */
+  private meetPlaceList(idx: number): { name: string; x: number; z: number }[] {
+    const wp = this.ui.hud.waypoint;
+    const list = this.svc.customers.meetPlaces(idx);
+    return wp ? [{ name: 'Your map waypoint', x: wp.x, z: wp.z }, ...list] : list;
+  }
+
+  /** "Arrange a meet" inside a customer's chat: what, how many, where, when and for how much. */
+  private meetForm(idx: number): string {
+    const s = this.svc;
+    const c = s.customers;
+    const open = c.deals.find((d) => d.person === idx && (d.status === 'offered' || d.status === 'accepted'));
+    if (open) return '';
+    const m = this.meet;
+    if (!m || m.idx !== idx) return `<div class="meet-cta"><button class="pbtn ok wide" data-meet-open="${idx}">📍 Arrange a meet</button></div>`;
+    const prof = c.profiles.get(idx)!;
+    const now = s.time.day * 1440 + s.time.minutes;
+    const me = s.player.position;
+    const fams = this.meetFamilies(prof.family);
+    const want = Math.max(1, c.wantUnits(prof));
+    const places = this.meetPlaceList(idx);
+    const opt = (v: string | number, label: string, sel: boolean) => `<option value="${v}"${sel ? ' selected' : ''}>${esc(label)}</option>`;
+    let times = '';
+    const first = Math.ceil((now + 30) / 30) * 30;
+    for (let k = 0; k < 28; k++) {
+      const at = first + k * 30;
+      const mins = at - now;
+      times += opt(at, `${meetTime(at, now)} (in ${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m)${at % 1440 >= 1380 || at % 1440 < 300 ? ' · curfew' : ''}`, at === m.at);
+    }
+    const fair = c.fairPrice(prof, m.family, m.units);
+    return `<div class="meet-form">
+      <div class="meet-title">Arrange a meet <button class="pbtn" data-meet-cancel="1">✕</button></div>
+      <label>Product<select id="meet-fam">${fams.map((f) => opt(f, `${FAMILIES[f].name}${f === prof.family ? ' (their favourite)' : ''}`, f === m.family)).join('')}</select></label>
+      <label>Amount<select id="meet-units">${Array.from({ length: Math.max(want, prof.appetite) }, (_, i) => i + 1).map((n) => opt(n, `${n} unit${n === 1 ? '' : 's'}${n === want ? ' (what they want)' : n > want ? ' (more than they want)' : ''}`, n === m.units)).join('')}</select></label>
+      <label>Where<select id="meet-place">${places.map((p, i) => opt(i, `${p.name} · ${Math.round(Math.hypot(p.x - me.x, p.z - me.z))} m away`, i === m.place)).join('')}</select></label>
+      <label>When<select id="meet-time">${times}</select></label>
+      <label>Price $<input id="meet-price" type="number" min="1" value="${m.price}"></label>
+      <div class="meet-hint">Fair price ≈ $${fair}. Ask much more and they'll haggle or walk. They won't meet during curfew unless they trust you.</div>
+      <button class="pbtn ok wide" data-meet-send="1">Send</button>
+    </div>`;
+  }
+
   private render() {
     const s = this.svc;
     const t = s.time;
@@ -110,7 +164,7 @@ export class Phone {
       case 'home': {
         const deals = s.customers.deals.filter((d) => d.status === 'accepted');
         html += `<div class="phone-wall"><div class="wall-time">${t.label}</div><div class="wall-cash">$${s.economy.cash.toLocaleString()}</div>`;
-        for (const d of deals.slice(0, 2)) html += `<div class="wall-card">Meet ${esc(s.customers.person(d.person).name)} · ${d.units} × ${FAMILIES[d.family].name} · ${esc(d.meet.name)}</div>`;
+        for (const d of deals.slice(0, 2)) html += `<div class="wall-card">Meet ${esc(s.customers.person(d.person).name)} · ${d.units} × ${FAMILIES[d.family].name} · ${esc(d.meet.name)}${d.at ? ` · ${meetTime(d.at, t.day * 1440 + t.minutes)}` : ''}</div>`;
         if (s.market.pending.length) html += `<div class="wall-card">${s.market.pending.length} order(s) on the way</div>`;
         if (s.employees.list.length) html += `<div class="wall-card">${s.employees.list.length} staff · wages $${s.employees.dailyWages}/day</div>`;
         html += '</div><div class="app-grid">';
@@ -148,21 +202,33 @@ export class Phone {
           let actions = '';
           if (d?.status === 'offered' && th.msgs[th.msgs.length - 1] === m)
             actions = `<div class="msg-actions"><button class="pbtn ok" data-accept="${d.id}">Accept $${d.price}</button><button class="pbtn" data-counter="${d.id}">Counter</button><button class="pbtn" data-decline="${d.id}">Decline</button></div><div class="counter-row" data-counter-row="${d.id}" hidden><span>$</span><input id="counter-in" type="number" value="${Math.round(d.price * 1.2)}"><button class="pbtn ok" data-send-counter="${d.id}">Send</button></div>`;
-          else if (d && th.msgs[th.msgs.length - 1] === m && d.status !== 'offered') actions = `<div class="msg-state ${d.status}">${{ accepted: `Meet at ${esc(d.meet.name)}`, done: 'Completed', failed: 'Expired', declined: 'Declined', offered: '' }[d.status]}</div>`;
+          else if (d && th.msgs[th.msgs.length - 1] === m && d.status !== 'offered') actions = `<div class="msg-state ${d.status}">${{ accepted: `Meet at ${esc(d.meet.name)}${d.at ? `, ${meetTime(d.at, t.day * 1440 + t.minutes)}` : ''}`, done: 'Completed', failed: 'Expired', declined: 'Declined', offered: '' }[d.status]}</div>`;
           html += `<div class="bubble ${m.me ? 'me' : 'them'}"><div>${esc(m.text)}</div><span>${m.at}</span>${actions}</div>`;
         }
         html += '</div>';
+        if (prof?.unlocked) html += this.meetForm(prof.idx);
         break;
       }
       case 'market': {
         html += this.header('Market');
+        const now = t.day * 1440 + t.minutes;
         const owned = s.properties.ownedList();
         html += `<div class="deliver"><span>Deliver to</span><select id="deliver-to">${owned.map((id) => `<option value="${id}" ${id === this.deliverTo ? 'selected' : ''}>${esc(s.properties.name(id))}</option>`).join('')}</select></div>`;
+        // Seeds: from the supplier, paid up front and picked up from a dead drop.
+        html += `<div class="mk-group">Seeds · from ${esc(SUPPLIER.name)}</div><p class="mk-note">Pay up front. He hides them somewhere in town and texts you the area (it's marked on your map). Go and find the bag.</p>`;
+        for (const id of ['seed_violet', 'seed_fern', 'seed_ember']) {
+          const d = ITEMS[id];
+          const locked = !s.market.unlocked(id);
+          const q = this.seedCart.get(id) ?? 0;
+          html += `<div class="mk-row${locked ? ' locked' : ''}"><img src="${iconFor({ id }, s.variants)}" alt=""><div class="mk-text"><strong>${d.name}</strong><span>${locked ? `Unlocks at $${d.unlock!.lifetimeRevenue.toLocaleString()} lifetime sales` : esc(d.desc)}</span></div><div class="mk-buy"><span class="price">$${d.price}</span>${locked ? '' : `<div class="stepper"><button data-sdec="${id}">−</button><span>${q}</span><button data-sinc="${id}">+</button></div>`}</div></div>`;
+        }
+        const seedTotal = [...this.seedCart].reduce((a, [id, q]) => a + ITEMS[id].price * q, 0);
+        const drops = s.market.drops.map((d) => (now < d.ready ? `Stash #${d.id}: hidden in ~${Math.ceil(d.ready - now)} min` : `Stash #${d.id}: ready, ${esc(d.hint)}`)).join('<br>');
+        html += `<div class="mk-foot"><div>${drops || `Ready about ${DROP_MINUTES} min after you pay`}</div><button class="pbtn ok" data-seeds="1" ${seedTotal ? '' : 'disabled'}>Pay Hoover · $${seedTotal}</button></div>`;
+        html += '<p class="mk-note">Mixers and Dreamdust/Neon supplies are sold over the counter at <strong>Kwik Corner</strong> on Ash Ave (07:00–23:00).</p>';
         const groups: [string, string[]][] = [
-          ['Grow', ['seed_violet', 'seed_fern', 'seed_ember', 'soil', 'soil_rich', 'fertilizer', 'wateringcan']],
-          ['Mixers', INGREDIENTS.map((i) => i.item)],
+          ['Grow supplies (delivered)', ['soil', 'soil_rich', 'fertilizer', 'wateringcan']],
           ['Packaging', ['baggie', 'jar']],
-          ['Dreamdust & Neon', ['moonsalt', 'starwater', 'resin']],
           ['Equipment (delivered as boxes; hold one and press E to place it)', ['pot', 'lamp', 'rack', 'storage', 'mixer', 'packager', 'kettle', 'press']],
           ['Gear', ['skateboard']],
         ];
@@ -337,6 +403,7 @@ export class Phone {
 
   private bind() {
     const s = this.svc;
+    const t = s.time;
     const q = (sel: string) => this.screen.querySelectorAll<HTMLElement>(sel);
     const on = (sel: string, fn: (el: HTMLElement) => void) => q(sel).forEach((b) => (b.onclick = () => fn(b)));
     this.screen.querySelectorAll('input').forEach((i) => i.addEventListener('keydown', (e) => e.stopPropagation()));
@@ -358,6 +425,67 @@ export class Phone {
     on('[data-send-counter]', (b) => {
       const v = Math.round(Number(this.screen.querySelector<HTMLInputElement>('#counter-in')?.value) || 0);
       if (v > 0) s.customers.counterDeal(Number(b.dataset.sendCounter), v);
+      this.render();
+      this.screen.scrollTop = this.screen.scrollHeight;
+    });
+    on('[data-sinc]', (b) => {
+      const id = b.dataset.sinc!;
+      this.seedCart.set(id, Math.min(30, (this.seedCart.get(id) ?? 0) + 1));
+      this.render();
+    });
+    on('[data-sdec]', (b) => {
+      const id = b.dataset.sdec!;
+      this.seedCart.set(id, Math.max(0, (this.seedCart.get(id) ?? 0) - 1));
+      this.render();
+    });
+    on('[data-seeds]', () => {
+      const r = s.market.orderSeeds(this.seedCart);
+      if (r.ok) this.seedCart.clear();
+      this.say(r.text);
+    });
+    on('[data-meet-open]', (b) => {
+      const idx = Number(b.dataset.meetOpen);
+      const prof = s.customers.profiles.get(idx)!;
+      const fams = this.meetFamilies(prof.family);
+      const units = Math.max(1, s.customers.wantUnits(prof));
+      const slot = Math.ceil((t.day * 1440 + t.minutes + 45) / 30) * 30;
+      this.meet = { idx, family: fams[0], units, place: 0, at: slot, price: s.customers.fairPrice(prof, fams[0], units), priced: false };
+      this.render();
+      this.screen.scrollTop = this.screen.scrollHeight;
+    });
+    on('[data-meet-cancel]', () => {
+      this.meet = null;
+      this.render();
+    });
+    const mf = (id: string) => this.screen.querySelector<HTMLInputElement & HTMLSelectElement>(`#${id}`);
+    const syncMeet = () => {
+      const m = this.meet;
+      if (!m) return;
+      const prof = s.customers.profiles.get(m.idx)!;
+      m.family = (mf('meet-fam')?.value as Family) ?? m.family;
+      m.units = Number(mf('meet-units')?.value) || m.units;
+      m.place = Number(mf('meet-place')?.value) || 0;
+      m.at = Number(mf('meet-time')?.value) || m.at;
+      const typed = Number(mf('meet-price')?.value);
+      if (typed > 0 && typed !== m.price) m.priced = true;
+      m.price = m.priced && typed > 0 ? typed : s.customers.fairPrice(prof, m.family, m.units);
+    };
+    for (const id of ['meet-fam', 'meet-units', 'meet-place', 'meet-time', 'meet-price']) {
+      const e = mf(id);
+      if (e) e.onchange = () => {
+        syncMeet();
+        this.render();
+        this.screen.scrollTop = this.screen.scrollHeight;
+      };
+    }
+    on('[data-meet-send]', () => {
+      syncMeet();
+      const m = this.meet;
+      if (!m) return;
+      const place = this.meetPlaceList(m.idx)[m.place];
+      const prop: MeetProposal = { family: m.family, units: m.units, price: m.price, place: { name: place.name, x: place.x, z: place.z }, at: m.at };
+      s.customers.arrange(m.idx, prop);
+      this.meet = null;
       this.render();
       this.screen.scrollTop = this.screen.scrollHeight;
     });

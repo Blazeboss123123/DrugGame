@@ -393,13 +393,15 @@ export class Panels {
 
   /** The corner shop counter: equipment and packaging bought over the counter, straight into the backpack. */
   openShop(markup: number) {
-    const { overlay, body } = this.shell('Kwik Corner', 'Cooking gear and supplies · pay at the counter, carry it home', true);
+    const { overlay, body } = this.shell('Kwik Corner', 'Mixers, gear and supplies · pay at the counter, carry it home', true);
     const out = el('p', 'result');
     const list = el('div', 'shop-list');
     const render = () => {
       list.innerHTML = '';
-      const items = Object.values(ITEMS).filter((d) => d.price > 0 && (d.kind === 'equipment' || d.kind === 'packaging' || d.kind === 'supply'));
-      items.sort((a, b) => (a.kind === b.kind ? a.price - b.price : a.kind === 'equipment' ? -1 : 1));
+      // Mixers are only sold here (not on the phone), so they come first.
+      const order = ['ingredient', 'supply', 'packaging', 'equipment'];
+      const items = Object.values(ITEMS).filter((d) => d.price > 0 && order.includes(d.kind));
+      items.sort((a, b) => (a.kind === b.kind ? a.price - b.price : order.indexOf(a.kind) - order.indexOf(b.kind)));
       for (const d of items) {
         const price = Math.round(d.price * markup);
         const locked = !this.svc.market.unlocked(d.id);
@@ -422,7 +424,7 @@ export class Panels {
       }
     };
     render();
-    const note = el('p', 'muted', `Cash: carry-out prices are ${Math.round((markup - 1) * 100)}% above phone orders, but there\u2019s no wait. Equipment goes in your backpack \u2014 hold it in your hotbar and press E inside a property to place it.`);
+    const note = el('p', 'muted', `The only place in town that sells mixers and brewing supplies. Gear costs ${Math.round((markup - 1) * 100)}% more than phone orders, but there\u2019s no wait. Equipment goes in your backpack \u2014 hold it in your hotbar and press E inside a property to place it.`);
     body.append(note, out, list);
     this.ui.present(overlay);
   }

@@ -44,6 +44,30 @@ export interface Deal {
   /** Hidden ceiling for counter-offers by text. */
   ceiling: number;
   rounds: number;
+  /** Arranged meets: the agreed meeting time (absolute game minutes). The customer shows up shortly before. */
+  at?: number;
+  /** The customer has set off for an arranged meet. */
+  sent?: boolean;
+}
+
+/** What you propose when arranging a meet from the phone. */
+export interface MeetProposal {
+  family: Family;
+  units: number;
+  price: number;
+  place: { name: string; x: number; z: number };
+  /** Absolute game minutes. */
+  at: number;
+}
+
+/** Clock label for an absolute game time, e.g. "Tue 15:30". */
+export function meetTime(abs: number, now: number): string {
+  const day = Math.floor(abs / 1440);
+  const m = abs % 1440;
+  const hh = String(Math.floor(m / 60)).padStart(2, '0');
+  const mm = String(Math.floor(m % 60)).padStart(2, '0');
+  const today = Math.floor(now / 1440);
+  return `${day === today ? '' : day === today + 1 ? 'tomorrow ' : `${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][(day - 1) % 7]} `}${hh}:${mm}`;
 }
 
 export interface Msg {
@@ -428,8 +452,16 @@ export class Customers {
       this.svc.ui.toast('You now have more than one meeting to get to.', 'info');
     }
     d.status = 'accepted';
-    d.expires = this.absMinutes + 240;
     const p = this.person(d.person);
+    if (d.at) {
+      // An arranged meet keeps its agreed time; they head over shortly before.
+      d.expires = d.at + 60;
+      const when = meetTime(d.at, this.absMinutes);
+      this.say(`c:${d.person}`, `Deal. See you at ${d.meet.name}, ${when}.`);
+      this.svc.ui.toast(`Meet arranged: ${p.name} at ${d.meet.name}, ${when}. It's on your map.`, 'good');
+      return 'Accepted';
+    }
+    d.expires = this.absMinutes + 240;
     this.say(`c:${d.person}`, `Deal. See you at ${d.meet.name}.`);
     this.peds.sendTo(p, d.meet.x, d.meet.z);
     this.svc.ui.toast(`Deal accepted. Meet ${p.name} at ${d.meet.name} within 4 hours.`, 'info');
@@ -461,6 +493,94 @@ export class Customers {
     d.price = Math.max(d.price, meet);
     this.post(key, p.name, `Too much. I can do $${d.price}, final offer.`, d.id);
     return 'countered';
+  }
+
+  /** Fair price for a customer, the same way their own requests are priced. */
+  fairPrice(prof: Profile, family: Family, units: number): number {
+    const known = [...this.svc.variants.variants.values()].filter((v) => v.family === family);
+    const ref = known.length ? known.reduce((s, v) => s + unitValue(v), 0) / known.length : FAMILIES[family].base;
+    return Math.max(5, Math.round((units * ref * (0.95 + prof.loyalty / 400)) / 5) * 5);
+  }
+
+  /** Spots worth suggesting for a customer: corners in their neighbourhood, then landmarks across town. */
+  meetPlaces(idx: number): { name: string; x: number; z: number }[] {
+    const p = this.person(idx);
+    const out: { name: string; x: number; z: number }[] = [];
+    const seen = new Set<string>();
+    const add = (x: number, z: number, name = streetCorner(x, z)) => {
+      if (seen.has(name)) return;
+      seen.add(name);
+      out.push({ name, x, z });
+    };
+    if (p.hood !== null) {
+      const nodes = [...this.peds.hoodNodes[p.hood]].map((i) => this.peds.nodes[i]);
+      // A spread of corners: every few nodes so they aren't all on the same block.
+      const step = Math.max(1, Math.floor(nodes.length / 5));
+      for (let i = 0; i < nodes.length && out.length < 5; i += step) add(nodes[i].x, nodes[i].z);
+    }
+    add(-50, -64.5, 'Outside Kwik Corner');
+    add(37.5, -12, 'Meridian Civic Plaza');
+    add(37.5, 10, 'Lucky 7 Casino, Main St');
+    for (const [x, z] of MEET_SPOTS.slice(0, 4)) add(x, z);
+    return out;
+  }
+
+  /**
+   * You propose a meet by text: what, how much, where and when. The customer accepts, counters the
+   * price, or turns it down (not hungry, too pricey, or during curfew).
+   */
+  arrange(idx: number, m: MeetProposal): 'accepted' | 'countered' | 'declined' {
+    const prof = this.profiles.get(idx);
+    const p = this.person(idx);
+    const key = `c:${idx}`;
+    if (!prof?.unlocked) return 'declined';
+    const when = meetTime(m.at, this.absMinutes);
+    this.say(key, `${m.units} × ${FAMILIES[m.family].name} for $${m.price}? Meet at ${m.place.name}, ${when}.`);
+    if (this.deals.some((d) => d.person === idx && (d.status === 'offered' || d.status === 'accepted'))) {
+      this.post(key, p.name, 'We already have something set up. Let’s do that first.');
+      return 'declined';
+    }
+    const want = this.wantUnits(prof);
+    if (want < 1 || prof.need < 0.3) {
+      this.post(key, p.name, this.rng.pick(FULL_LINES));
+      return 'declined';
+    }
+    if (m.units > want) {
+      this.post(key, p.name, `That’s too much for me. I only need ${want} right now.`);
+      return 'declined';
+    }
+    const minute = m.at % 1440;
+    if ((minute >= 23 * 60 || minute < 5 * 60) && prof.loyalty < 60) {
+      this.post(key, p.name, 'During curfew? No way, the place is crawling with cops. Pick a time in the day.');
+      return 'declined';
+    }
+    const fair = this.fairPrice(prof, m.family, m.units);
+    // Loyal customers stretch further; everyone has a hard limit.
+    const ceiling = Math.round(fair * (1.1 + prof.loyalty / 500));
+    // Guests pick ids well away from the host's so two players' deals never clash.
+    const net = this.svc.net;
+    const id = net?.online && !net.isHost ? 100000 + Math.floor(Math.random() * 800000) : this.nextId++;
+    const deal: Deal = { id, person: idx, family: m.family, units: m.units, price: m.price, meet: { ...m.place }, expires: m.at + 60, status: 'accepted', ceiling, rounds: 0, at: m.at };
+    if (m.price <= ceiling) {
+      this.deals.unshift(deal);
+      this.post(key, p.name, `Deal. See you at ${m.place.name}, ${when}. Don’t be late.`, deal.id);
+      this.svc.ui.toast(`Meet arranged: ${p.name} at ${m.place.name}, ${when}. It's on your map.`, 'good');
+      this.svc.audio.play('ui');
+      return 'accepted';
+    }
+    if (m.price <= ceiling * 1.45) {
+      // They counter: an offer at their price, same time and place, that you can accept or haggle.
+      deal.status = 'offered';
+      deal.price = Math.round((ceiling * 0.97) / 5) * 5;
+      deal.ceiling = Math.round(ceiling * 1.03);
+      deal.expires = Math.min(m.at, this.absMinutes + 60);
+      this.deals.unshift(deal);
+      this.post(key, p.name, `Too steep. $${deal.price} and you’ve got a deal, ${when} at ${m.place.name}.`, deal.id);
+      return 'countered';
+    }
+    prof.loyalty = Math.max(0, prof.loyalty - 2);
+    this.post(key, p.name, this.rng.pick(WALK_LINES));
+    return 'declined';
   }
 
   decline(id: number) {
@@ -605,6 +725,16 @@ export class Customers {
       this.newDeal();
       this.nextDealAt = now + (this.rng.range(40, 100) / Math.min(3, 1 + this.customers.length * 0.15)) * (this.svc.upgrades?.has('burner') ? 0.6 : 1);
     }
+    // Arranged meets: the customer sets off about 25 minutes before, and you get a reminder.
+    for (const d of this.deals) {
+      if (d.status !== 'accepted' || !d.at || d.sent) continue;
+      if (now >= d.at - 25) {
+        d.sent = true;
+        const p = this.person(d.person);
+        this.peds.sendTo(p, d.meet.x, d.meet.z);
+        this.svc.bus.emit('phone:notify', { app: 'messages', text: `${p.name}: "Heading to ${d.meet.name} now."` });
+      }
+    }
     for (const d of this.deals) {
       if (net?.online && !net.isHost) break; // the host's game expires deals for everyone
       if ((d.status === 'offered' || d.status === 'accepted') && now > d.expires) {
@@ -654,7 +784,7 @@ export class Customers {
     for (const t of d.threads ?? []) this.threads.set(t.key, t);
     this.nextDealAt = d.nextDealAt;
     this.nextId = d.nextId;
-    for (const deal of this.deals) if (deal.status === 'accepted') this.peds.sendTo(this.person(deal.person), deal.meet.x, deal.meet.z);
+    for (const deal of this.deals) if (deal.status === 'accepted' && (!deal.at || deal.sent)) this.peds.sendTo(this.person(deal.person), deal.meet.x, deal.meet.z);
     this.version++;
   }
 }

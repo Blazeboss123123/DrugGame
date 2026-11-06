@@ -12,6 +12,7 @@ export interface Objective {
 const SIGNAL_TO_OBJECTIVE: Partial<Record<ObjectiveSignal, string>> = {
   mail: 'mail',
   order: 'order',
+  drop: 'drop',
   collect: 'collect',
   plant: 'plant',
   water: 'water',
@@ -33,8 +34,9 @@ export class GameState {
   readonly objectives: Objective[] = [
     { id: 'walk', text: 'Get your bearings: walk around', hint: 'W A S D to move, mouse to look.', progress: () => `${Math.min(15, Math.floor(this.walked))}/15 m` },
     { id: 'mail', text: 'Check the mailbox outside 14 Larch Street', hint: 'Look at the blue mailbox by the path and press E.' },
-    { id: 'order', text: 'Order seeds and soil from the Market app', hint: 'Press M for your phone, open Market, add a seed and soil, then Order.' },
+    { id: 'order', text: 'Order soil and buy seeds in the Market app', hint: 'Press M, open Market. Soil is delivered to your porch; seeds come from Hoover, your supplier: pay him and he hides them somewhere in town.' },
     { id: 'collect', text: 'Collect your delivery from the porch box', hint: 'Deliveries arrive in the crate on your porch. Press E on it and take the items.' },
+    { id: 'drop', text: 'Find the dead drop and pick up your seeds', hint: 'Hoover texts you when they’re stashed. The search area is marked on your map (N): look for a small paper bag.' },
     { id: 'plant', text: 'Fill a grow pot with soil and plant a seed', hint: 'Grow pots are in the garage. Select soil in your hotbar, press E on a pot, then do the same with a seed.' },
     { id: 'water', text: 'Water the plant', hint: 'Select the watering can (hotbar) and press E on the pot.' },
     { id: 'harvest', text: 'Harvest the Nightshade when it is ready', hint: 'Plants grow over a few hours of game time. Sleep, or keep them watered and wait.' },

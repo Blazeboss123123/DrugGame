@@ -1,6 +1,7 @@
 import { DISTRICTS, streetNameAt, type District } from '../world/CityPlan';
 import type { UIHost } from './UI';
 import type { Services } from '../core/Services';
+import { meetTime } from '../business/Customers';
 import { FAMILIES } from '../products/Catalog';
 import { iconFor, stackName } from './Icons';
 import { Minimap } from './Minimap';
@@ -324,9 +325,17 @@ export class HUD {
         setHtml(this.dealTrack, deals
           .slice(0, 3)
           .map((d) => {
-            const left = Math.max(0, d.expires - (svc.time.day * 1440 + svc.time.minutes));
+            const now = svc.time.day * 1440 + svc.time.minutes;
+            const left = Math.max(0, d.expires - now);
             const dist = Math.round(Math.hypot(d.meet.x - x, d.meet.z - z));
-            return `<div><span class="eyebrow">Deal</span> <strong>${svc.customers.person(d.person).name}</strong> wants ${d.units} × ${FAMILIES[d.family].name} · $${d.price}<br><span class="muted">${d.meet.name} · ${dist} m · ${Math.floor(left / 60)}h ${Math.floor(left % 60)}m left</span></div>`;
+            // Arranged meets show the agreed time: a countdown before, then how long they'll wait.
+            const until = d.at ? d.at - now : 0;
+            const when = d.at
+              ? until > 0
+                ? `at ${meetTime(d.at, now)} · in ${Math.floor(until / 60)}h ${Math.floor(until % 60)}m`
+                : `they're there now · waiting ${Math.floor(left)}m more`
+              : `${Math.floor(left / 60)}h ${Math.floor(left % 60)}m left`;
+            return `<div><span class="eyebrow">${d.at ? 'Meet' : 'Deal'}</span> <strong>${svc.customers.person(d.person).name}</strong> wants ${d.units} × ${FAMILIES[d.family].name} · $${d.price}<br><span class="muted">${d.meet.name} · ${dist} m · ${when}</span></div>`;
           })
           .join(''));
       }

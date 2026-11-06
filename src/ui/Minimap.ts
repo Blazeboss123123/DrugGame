@@ -2,6 +2,8 @@ import type { Services } from '../core/Services';
 import { PROPERTIES } from '../properties/PropertyDefs';
 import { SHOP } from '../properties/CornerShop';
 import { CASINO, casinoOpen } from '../properties/Casino';
+import { meetTime } from '../business/Customers';
+import { DROP_AREA } from '../economy/Market';
 import { FAMILIES } from '../products/Catalog';
 import { NEIGHBOURHOODS } from '../npc/Neighbourhoods';
 import { AVENUES, GRID, RIVER, ROAD, STREETS, WORLD_HALF, X_LINES, Z_LINES, bridgeSpan, districtAt, riverX } from '../world/CityPlan';
@@ -18,7 +20,7 @@ const DISTRICT_COL: Record<string, string> = {
   outskirts: '#2f4528',
 };
 
-export type MarkerKind = 'home' | 'shop' | 'casino' | 'owned' | 'sale' | 'car' | 'request' | 'deal' | 'police' | 'player' | 'waypoint';
+export type MarkerKind = 'home' | 'shop' | 'casino' | 'owned' | 'sale' | 'car' | 'request' | 'deal' | 'police' | 'player' | 'waypoint' | 'drop';
 
 export interface Marker {
   kind: MarkerKind;
@@ -27,6 +29,10 @@ export interface Marker {
   label?: string;
   /** Keep on the edge of the minimap when out of range (deals, waypoint). */
   pin?: boolean;
+  /** Short text drawn beside the marker (an arranged meet's time). */
+  tag?: string;
+  /** Search area radius in metres (dead drops). */
+  area?: number;
 }
 
 const MARKER_COL: Record<MarkerKind, string> = {
@@ -41,11 +47,13 @@ const MARKER_COL: Record<MarkerKind, string> = {
   police: '#4a7fff',
   player: '#ff7ad1',
   waypoint: '#ffffff',
+  drop: '#c98bff',
 };
 
 export const MARKER_LEGEND: [MarkerKind, string][] = [
   ['request', 'Order request'],
-  ['deal', 'Accepted deal'],
+  ['deal', 'Accepted deal / arranged meet'],
+  ['drop', 'Dead drop (search area)'],
   ['home', 'Your places'],
   ['shop', 'Kwik Corner'],
   ['casino', 'Casino'],
@@ -216,16 +224,47 @@ export function currentMarkers(svc: Services, waypoint: { x: number; z: number }
       x: d.meet.x,
       z: d.meet.z,
       pin: true,
-      label: `${who} · ${d.units} × ${FAMILIES[d.family].name} · $${d.price} · ${d.meet.name}${d.status === 'offered' ? ' (reply in Messages)' : ''}`,
+      label: `${who} · ${d.units} × ${FAMILIES[d.family].name} · $${d.price} · ${d.meet.name}${d.at ? ` · ${meetTime(d.at, svc.customers.absMinutes)}` : ''}${d.status === 'offered' ? ' (reply in Messages)' : ''}`,
+      tag: d.at ? meetTime(d.at, svc.customers.absMinutes) : undefined,
     });
   }
+  // Seeds waiting at a dead drop: only the rough area is known.
+  for (const d of svc.market.drops)
+    if (svc.customers.absMinutes >= d.ready) m.push({ kind: 'drop', x: d.cx, z: d.cz, pin: true, area: DROP_AREA, tag: 'Seeds', label: `Dead drop: your seeds are ${d.hint}` });
   if (waypoint) m.push({ kind: 'waypoint', x: waypoint.x, z: waypoint.z, pin: true, label: 'Waypoint' });
   return m;
 }
 
 /** Draws one marker at canvas position (x, y). */
-export function drawMarker(g: CanvasRenderingContext2D, mk: Marker, x: number, y: number, s = 1, t = 0) {
+export function drawMarker(g: CanvasRenderingContext2D, mk: Marker, x: number, y: number, s = 1, t = 0, ppm = 0) {
   const col = MARKER_COL[mk.kind];
+  // Search area (dead drops): a dashed circle at true scale.
+  if (mk.area && ppm > 0) {
+    g.save();
+    g.beginPath();
+    g.arc(x, y, mk.area * ppm, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(201,139,255,0.16)';
+    g.fill();
+    g.setLineDash([5 * s, 4 * s]);
+    g.strokeStyle = col;
+    g.lineWidth = 1.6 * s;
+    g.stroke();
+    g.restore();
+  }
+  if (mk.tag) {
+    // Time / label pill above the marker.
+    g.save();
+    g.font = `800 ${9.5 * s}px Archivo, Arial, sans-serif`;
+    const w = g.measureText(mk.tag).width + 8 * s;
+    const ty = y - 19 * s;
+    g.fillStyle = 'rgba(12,14,12,0.85)';
+    g.fillRect(x - w / 2, ty - 7 * s, w, 14 * s);
+    g.fillStyle = col;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(mk.tag, x, ty + 0.5 * s);
+    g.restore();
+  }
   g.lineWidth = 2 * s;
   g.strokeStyle = '#111';
   g.fillStyle = col;
@@ -279,6 +318,17 @@ export function drawMarker(g: CanvasRenderingContext2D, mk: Marker, x: number, y
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillText('7', x, y + 0.5 * s);
+      break;
+    case 'drop':
+      // A little paper bag.
+      g.fillRect(x - 5 * s, y - 4 * s, 10 * s, 10 * s);
+      g.strokeRect(x - 5 * s, y - 4 * s, 10 * s, 10 * s);
+      g.beginPath();
+      g.moveTo(x - 5 * s, y - 4 * s);
+      g.lineTo(x - 3 * s, y - 7 * s);
+      g.lineTo(x + 3 * s, y - 7 * s);
+      g.lineTo(x + 5 * s, y - 4 * s);
+      g.stroke();
       break;
     case 'waypoint':
       g.beginPath();
@@ -393,7 +443,7 @@ export class Minimap {
         x = cx + (dx / d) * rim;
         y = cx + (dy / d) * rim;
       }
-      drawMarker(g, mk, x, y, s, this.t);
+      drawMarker(g, mk, x, y, s, this.t, scale);
     }
     drawPlayer(g, cx, cx, heading, dpr);
     g.restore();
@@ -445,11 +495,14 @@ export function openWorldMap(svc: Services, map: CityMap, ui: { present: (el: HT
         ? deals
             .map((d) => {
               const dist = Math.round(Math.hypot(d.meet.x - pl.x, d.meet.z - pl.z));
-              return `<div class="wm-order ${d.status}"><strong>${svc.customers.person(d.person).name}</strong> <span class="muted">${d.status === 'offered' ? 'requested' : 'accepted'}</span><br>${d.units} × ${FAMILIES[d.family].name} · $${d.price}<br><span class="muted">${d.meet.name} · ${dist} m</span><button class="pbtn" data-go="${d.meet.x},${d.meet.z}">Set waypoint</button></div>`;
+              return `<div class="wm-order ${d.status}"><strong>${svc.customers.person(d.person).name}</strong> <span class="muted">${d.status === 'offered' ? 'requested' : d.at ? 'arranged' : 'accepted'}</span><br>${d.units} × ${FAMILIES[d.family].name} · $${d.price}${d.at ? ` · <strong>${meetTime(d.at, svc.customers.absMinutes)}</strong>` : ''}<br><span class="muted">${d.meet.name} · ${dist} m</span><button class="pbtn" data-go="${d.meet.x},${d.meet.z}">Set waypoint</button></div>`;
             })
             .join('')
-        : '<p class="muted small">No order requests right now. Customers text you when they want to buy.</p>'
-    }`;
+        : '<p class="muted small">No order requests right now. Customers text you when they want to buy, or arrange a meet from their chat.</p>'
+    }${svc.market.drops
+      .filter((d) => svc.customers.absMinutes >= d.ready)
+      .map((d) => `<div class="wm-order drop"><strong>Dead drop</strong> <span class="muted">seeds</span><br><span class="muted">${d.hint}</span><button class="pbtn" data-go="${d.cx},${d.cz}">Set waypoint</button></div>`)
+      .join('')}`;
     list.querySelectorAll<HTMLElement>('[data-go]').forEach((b) =>
       (b.onclick = () => {
         const [x, z] = b.dataset.go!.split(',').map(Number);
@@ -480,7 +533,7 @@ export function openWorldMap(svc: Services, map: CityMap, ui: { present: (el: HT
     for (const mk of currentMarkers(svc, ui.hud.waypoint)) {
       const [x, y] = P(mk.x, mk.z);
       if (x < -20 || y < -20 || x > W + 20 || y > H + 20) continue;
-      drawMarker(g, mk, x, y, dpr * 1.1, t);
+      drawMarker(g, mk, x, y, dpr * 1.1, t, z);
     }
     const me = svc.vehicles.driving?.pos ?? pl;
     const [px, py] = P(me.x, me.z);

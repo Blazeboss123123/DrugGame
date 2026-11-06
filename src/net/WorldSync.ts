@@ -158,7 +158,8 @@ export class WorldSync {
     ops.push({ k: 'vars', list: [...this.svc.variants.variants.values()] });
     for (const p of c.profiles.values()) ops.push({ k: 'prof', d: p });
     for (const d of c.deals) ops.push({ k: 'deal', d });
-    for (const t of c.threads.values()) ops.push({ k: 'thr', d: t });
+    // Your supplier chat is yours alone (dead drops aren't shared).
+    for (const t of c.threads.values()) if (t.key !== 'supplier') ops.push({ k: 'thr', d: t });
     return ops;
   }
 
@@ -290,13 +291,14 @@ export class WorldSync {
       }
     }
     for (const d of c.deals) {
-      const sig = signature([d.status, d.price, d.units, d.expires, d.rounds]);
+      const sig = signature([d.status, d.price, d.units, d.expires, d.rounds, d.sent ? 1 : 0]);
       if (ck.get(`d${d.id}`) !== sig) {
         ck.set(`d${d.id}`, sig);
         ops.push({ k: 'deal', d });
       }
     }
     for (const t of c.threads.values()) {
+      if (t.key === 'supplier') continue;
       const sig = `${t.msgs.length}|${t.msgs[t.msgs.length - 1]?.text ?? ''}`;
       if (ck.get(`t${t.key}`) !== sig) {
         ck.set(`t${t.key}`, sig);
@@ -319,6 +321,7 @@ export class WorldSync {
       const d = op.d;
       const cur = c.deals.find((x) => x.id === d.id);
       const was = cur?.status;
+      const wasSent = cur?.sent;
       if (cur) Object.assign(cur, d);
       else {
         c.deals.unshift({ ...d });
@@ -327,9 +330,11 @@ export class WorldSync {
       c.bumpId(d.id);
       // The customer walks to (or leaves) the meeting point for everyone.
       const p = c.person(d.person);
-      if (d.status === 'accepted' && was !== 'accepted') c.peds.sendTo(p, d.meet.x, d.meet.z);
+      // (An arranged meet only sends them over close to the agreed time.)
+      if (d.status === 'accepted' && was !== 'accepted' && (!d.at || d.sent)) c.peds.sendTo(p, d.meet.x, d.meet.z);
+      else if (d.sent && cur && !wasSent) c.peds.sendTo(p, d.meet.x, d.meet.z);
       else if (was === 'accepted' && d.status !== 'accepted' && p.mode === 'wait') c.peds.release(p);
-      ck.set(`d${d.id}`, signature([d.status, d.price, d.units, d.expires, d.rounds]));
+      ck.set(`d${d.id}`, signature([d.status, d.price, d.units, d.expires, d.rounds, d.sent ? 1 : 0]));
     } else {
       const t = op.d;
       const cur = c.threads.get(t.key);
@@ -365,7 +370,7 @@ export class WorldSync {
     const c = this.svc.customers;
     const ck = this.knownFor('#customers');
     for (const p of c.profiles.values()) ck.set(`p${p.idx}`, signature([p.unlocked, p.loyalty, p.deals, p.spent, p.need, p.refusedDay, p.craving]));
-    for (const d of c.deals) ck.set(`d${d.id}`, signature([d.status, d.price, d.units, d.expires, d.rounds]));
+    for (const d of c.deals) ck.set(`d${d.id}`, signature([d.status, d.price, d.units, d.expires, d.rounds, d.sent ? 1 : 0]));
     for (const t of c.threads.values()) ck.set(`t${t.key}`, `${t.msgs.length}|${t.msgs[t.msgs.length - 1]?.text ?? ''}`);
     for (const v of this.svc.variants.variants.values()) this.sentVariants.add(v.key);
   }

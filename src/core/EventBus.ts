@@ -33,6 +33,7 @@ export type ObjectiveSignal =
   | 'sleep'
   | 'phone'
   | 'order'
+  | 'drop'
   | 'collect'
   | 'plant'
   | 'water'
