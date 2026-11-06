@@ -434,7 +434,9 @@ export class Properties {
     const def = PROPERTIES.find((p) => p.id === id);
     if (!def) return 'Unknown property.';
     if (this.owns(id)) return 'You already own it.';
-    if (!this.svc.economy.spend(def.price, `Bought ${def.name}`)) return `You need $${def.price.toLocaleString()} (you have $${this.svc.economy.cash.toLocaleString()}).`;
+    // Property goes through the bank: card only.
+    const short = this.svc.economy.cardShort(def.price);
+    if (short || !this.svc.economy.payCard(def.price, `Bought ${def.name}`)) return short ?? 'Card declined.';
     this.owned.add(id);
     const site = this.svc.production.sites.get(id);
     for (const [kind, n] of def.includes) for (let i = 0; i < n; i++) site?.install(kind);
@@ -469,7 +471,7 @@ export class Properties {
     if (this.lastDay === 0) this.lastDay = day;
     if (day === this.lastDay || this.svc.time.minutes < 7 * 60) return;
     this.lastDay = day;
-    for (const def of PROPERTIES) if (this.owns(def.id)) this.svc.economy.forfeit(def.upkeep, `Upkeep: ${def.name}`);
+    for (const def of PROPERTIES) if (this.owns(def.id)) this.svc.economy.bill(def.upkeep, `Upkeep: ${def.name}`);
   }
 
   toJSON() {

@@ -406,11 +406,12 @@ export class Panels {
         const price = Math.round(d.price * markup);
         const locked = !this.svc.market.unlocked(d.id);
         const row = el('div', `shop-row${locked ? ' locked' : ''}`);
-        row.innerHTML = `<div class="shop-icon"><img src="${iconFor({ id: d.id }, this.svc.variants)}" alt=""></div><div class="shop-info"><strong>${esc(d.name)}</strong> <span class="muted">$${price}</span><div class="muted small">${esc(locked ? `Unlocks at $${d.unlock!.lifetimeRevenue.toLocaleString()} lifetime sales` : d.desc)}</div></div>`;
+        const card = this.svc.economy.needsCard(price);
+        row.innerHTML = `<div class="shop-icon"><img src="${iconFor({ id: d.id }, this.svc.variants)}" alt=""></div><div class="shop-info"><strong>${esc(d.name)}</strong> <span class="muted">${card ? '💳 card only · ' : ''}$${price}</span><div class="muted small">${esc(locked ? `Unlocks at $${d.unlock!.lifetimeRevenue.toLocaleString()} lifetime sales` : d.desc)}</div></div>`;
         const btns = el('div', 'btn-row tight');
         for (const n of d.stack >= 5 ? [1, 5] : [1]) {
           const b = el('button', 'btn small', `Buy ${n}`);
-          b.disabled = locked || this.svc.economy.cash < price * n;
+          b.disabled = locked || (card ? this.svc.economy.bank : this.svc.economy.cash) < price * n;
           b.onclick = () => {
             const r = this.svc.market.buyNow(d.id, n, markup);
             out.textContent = r.text;

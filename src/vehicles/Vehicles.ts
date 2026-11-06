@@ -236,7 +236,9 @@ export class Vehicles {
   buy(type: VehicleType, color: number): string {
     const def = VEHICLE_TYPES[type];
     if (!this.unlocked(type)) return `Unlocks at $${def.unlock.toLocaleString()} lifetime sales.`;
-    if (!this.svc.economy.spend(def.price, `Bought ${def.name}`)) return `You need $${def.price.toLocaleString()}.`;
+    // Cars are card-only: dealers don't take bags of cash.
+    const short = this.svc.economy.cardShort(def.price);
+    if (short || !this.svc.economy.payCard(def.price, `Bought ${def.name}`)) return short ?? 'Card declined.';
     const [x, z, yaw] = this.parkingSpot();
     this.spawn(type, color, x, z, yaw);
     return `Your ${def.name} is parked on Larch Street outside your house.`;

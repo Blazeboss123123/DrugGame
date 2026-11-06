@@ -11,7 +11,7 @@ export interface GameEvents {
   'player:land': { speed: number };
   'interior:change': { inside: boolean };
   'time:slept': { day: number };
-  'money:changed': { cash: number; delta: number };
+  'money:changed': { cash: number; delta: number; bank?: number; card?: boolean };
   'police:state': { state: 'clear' | 'chase' | 'search'; officer?: string };
   'phone:notify': { app: string; text: string };
   'player:took': { effects: string[] };

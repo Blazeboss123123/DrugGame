@@ -389,6 +389,9 @@ export class Game implements UIHost {
 
   /** Advances every time-driven system by the given number of game minutes. */
   private advanceMinutes(minutes: number) {
+    // Laundered money clearing into the bank.
+    for (const w of this.economy.advanceWash(this.time.day * 1440 + this.time.minutes))
+      this.bus.emit('phone:notify', { app: 'finance', text: `Bank: +$${w.amount.toLocaleString()} clean money from ${w.via}.` });
     this.production.advance(minutes);
     this.customers.advance(minutes);
     this.market.advance();
@@ -764,6 +767,7 @@ export class Game implements UIHost {
           { label: '+$1,000', run: () => this.economy.earn(1000, 'Cheat', false) },
           { label: "Remove everyone's money", run: () => this.wipeAllMoney() },
           { label: '+$25,000', run: () => this.economy.earn(25000, 'Cheat', false) },
+          { label: '+$10,000 in the bank (clean)', run: () => this.economy.deposit(10000, 'Cheat deposit') },
           {
             label: '+$10,000 lifetime sales (unlocks)',
             run: () => {

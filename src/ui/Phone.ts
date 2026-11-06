@@ -1,6 +1,7 @@
 import type { Services } from '../core/Services';
 import { ROLES, SHIFTS, type Role, type Shift } from '../employees/Employees';
 import { DELIVERY_MINUTES, DROP_MINUTES, SUPPLIER } from '../economy/Market';
+import { FRONTS } from '../economy/Economy';
 import { meetTime, type MeetProposal } from '../business/Customers';
 import type { Family } from '../products/Catalog';
 import { GANGS, GANG_IDS } from '../business/Rivals';
@@ -104,7 +105,7 @@ export class Phone {
   }
 
   private header(title: string, back: App = 'home') {
-    return `<div class="app-head"><button class="back" data-go="${back}">‹</button><h3>${title}</h3><span>$${this.svc.economy.cash.toLocaleString()}</span></div>${this.flash ? `<div class="flash">${esc(this.flash)}</div>` : ''}`;
+    return `<div class="app-head"><button class="back" data-go="${back}">‹</button><h3>${title}</h3><span>$${this.svc.economy.cash.toLocaleString()}<em class="ph-bank">💳 $${this.svc.economy.bank.toLocaleString()}</em></span></div>${this.flash ? `<div class="flash">${esc(this.flash)}</div>` : ''}`;
   }
 
   /** Families you can actually offer (ones you've made), the customer's favourite first. */
@@ -163,7 +164,7 @@ export class Phone {
     switch (this.app) {
       case 'home': {
         const deals = s.customers.deals.filter((d) => d.status === 'accepted');
-        html += `<div class="phone-wall"><div class="wall-time">${t.label}</div><div class="wall-cash">$${s.economy.cash.toLocaleString()}</div>`;
+        html += `<div class="phone-wall"><div class="wall-time">${t.label}</div><div class="wall-cash">$${s.economy.cash.toLocaleString()}</div><div class="wall-bank">💳 Bank $${s.economy.bank.toLocaleString()}</div>`;
         for (const d of deals.slice(0, 2)) html += `<div class="wall-card">Meet ${esc(s.customers.person(d.person).name)} · ${d.units} × ${FAMILIES[d.family].name} · ${esc(d.meet.name)}${d.at ? ` · ${meetTime(d.at, t.day * 1440 + t.minutes)}` : ''}</div>`;
         if (s.market.pending.length) html += `<div class="wall-card">${s.market.pending.length} order(s) on the way</div>`;
         if (s.employees.list.length) html += `<div class="wall-card">${s.employees.list.length} staff · wages $${s.employees.dailyWages}/day</div>`;
@@ -239,7 +240,7 @@ export class Phone {
             const d = ITEMS[id];
             const block = s.market.canBuy(id, this.deliverTo);
             const q = this.cart.get(id) ?? 0;
-            html += `<div class="mk-row${block ? ' locked' : ''}"><img src="${iconFor({ id }, s.variants)}" alt=""><div class="mk-text"><strong>${d.name}</strong><span>${block ?? esc(d.desc)}</span></div><div class="mk-buy"><span class="price">$${d.price}</span>${block ? '' : `<div class="stepper"><button data-dec="${id}">−</button><span>${q}</span><button data-inc="${id}">+</button></div>`}</div></div>`;
+            html += `<div class="mk-row${block ? ' locked' : ''}"><img src="${iconFor({ id }, s.variants)}" alt=""><div class="mk-text"><strong>${d.name}</strong><span>${block ?? esc(d.desc)}</span></div><div class="mk-buy"><span class="price">${s.economy.needsCard(d.price) ? '💳 ' : ''}$${d.price}</span>${block ? '' : `<div class="stepper"><button data-dec="${id}">−</button><span>${q}</span><button data-inc="${id}">+</button></div>`}</div></div>`;
           }
         }
         const pend = s.market.pending.map((p) => `#${p.id} → ${esc(s.properties.name(p.site))} in ${Math.max(0, Math.ceil(p.arrives - (t.day * 1440 + t.minutes)))} min`).join(' · ');
@@ -254,7 +255,7 @@ export class Phone {
           for (const u of UPGRADES.filter((x) => x.group === grp)) {
             const st = s.upgrades.status(u);
             const owned = s.upgrades.has(u.id);
-            html += `<div class="contact upg-card${owned ? ' owned' : ''}${st && !owned ? ' locked' : ''}"><div class="contact-top"><strong>${esc(u.name)}</strong><span>${owned ? 'Owned' : `$${u.price.toLocaleString()}`}</span></div><p class="small">${esc(u.desc)}</p><div class="emp-actions">${owned ? '<span class="muted">Active</span>' : st ? `<span class="muted small">${esc(st)}</span>` : `<button class="pbtn ok" data-upgrade="${u.id}" ${s.economy.cash < u.price ? 'disabled' : ''}>Buy · $${u.price.toLocaleString()}</button>`}</div></div>`;
+            html += `<div class="contact upg-card${owned ? ' owned' : ''}${st && !owned ? ' locked' : ''}"><div class="contact-top"><strong>${esc(u.name)}</strong><span>${owned ? 'Owned' : `$${u.price.toLocaleString()}`}</span></div><p class="small">${esc(u.desc)}</p><div class="emp-actions">${owned ? '<span class="muted">Active</span>' : st ? `<span class="muted small">${esc(st)}</span>` : `<button class="pbtn ok" data-upgrade="${u.id}" ${(s.economy.needsCard(u.price) ? s.economy.bank : s.economy.cash) < u.price ? 'disabled' : ''}>${s.economy.needsCard(u.price) ? '💳 ' : ''}Buy · $${u.price.toLocaleString()}</button>`}</div></div>`;
           }
         }
         html += '<div class="mk-group">Your workspaces</div>';
@@ -323,7 +324,7 @@ export class Phone {
         html += `<div class="contact"><div class="contact-top"><strong>14 Larch Street</strong><span>Owned</span></div><span class="muted">Your house and garage · staff ${s.employees.countAt('home')}/${s.properties.staffCap('home')}</span></div>`;
         for (const p of PROPERTIES) {
           const own = s.properties.owns(p.id);
-          html += `<div class="contact"><div class="contact-top"><strong>${esc(p.name)}</strong><span>${own ? 'Owned' : `$${p.price.toLocaleString()}`}</span></div><span class="muted">${DISTRICTS[p.district].name} · upkeep $${p.upkeep}/day · ${p.staff} staff · ${p.storage} storage</span><p class="small">${esc(p.desc)}</p><div class="emp-actions">${own ? `<span class="muted">Staff ${s.employees.countAt(p.id)}/${p.staff}</span>` : `<button class="pbtn ok" data-buyprop="${p.id}">Buy</button>`}<button class="pbtn" data-waypoint="${p.x},${p.z}">Show on map</button></div></div>`;
+          html += `<div class="contact"><div class="contact-top"><strong>${esc(p.name)}</strong><span>${own ? 'Owned' : `$${p.price.toLocaleString()}`}</span></div><span class="muted">${DISTRICTS[p.district].name} · upkeep $${p.upkeep}/day · ${p.staff} staff · ${p.storage} storage</span><p class="small">${esc(p.desc)}</p><div class="emp-actions">${own ? `<span class="muted">Staff ${s.employees.countAt(p.id)}/${p.staff}</span>` : `<button class="pbtn ok" data-buyprop="${p.id}" ${s.economy.bank < p.price ? 'disabled' : ''}>💳 Buy by card</button>`}<button class="pbtn" data-waypoint="${p.x},${p.z}">Show on map</button></div></div>`;
         }
         break;
       }
@@ -333,7 +334,7 @@ export class Phone {
         for (const k of Object.keys(VEHICLE_TYPES) as VehicleType[]) {
           const d = VEHICLE_TYPES[k];
           const ok = s.vehicles.unlocked(k);
-          html += `<div class="contact${ok ? '' : ' locked'}"><div class="contact-top"><strong>${d.name}</strong><span>$${d.price.toLocaleString()}</span></div><span class="muted">${esc(d.desc)} · top speed ${Math.round(d.top * 3.6)} km/h · ${d.trunk} trunk slots</span><div class="emp-actions">${ok ? `<button class="pbtn ok" data-buycar="${k}">Buy in this colour</button>` : `<span class="muted">Unlocks at $${d.unlock.toLocaleString()} lifetime sales</span>`}</div></div>`;
+          html += `<div class="contact${ok ? '' : ' locked'}"><div class="contact-top"><strong>${d.name}</strong><span>$${d.price.toLocaleString()}</span></div><span class="muted">${esc(d.desc)} · top speed ${Math.round(d.top * 3.6)} km/h · ${d.trunk} trunk slots</span><div class="emp-actions">${ok ? `<button class="pbtn ok" data-buycar="${k}" ${s.economy.bank < d.price ? 'disabled' : ''}>💳 Buy in this colour</button>` : `<span class="muted">Unlocks at $${d.unlock.toLocaleString()} lifetime sales</span>`}</div></div>`;
         }
         if (s.vehicles.list.length) {
           html += '<div class="mk-group">Your cars</div>';
@@ -363,7 +364,23 @@ export class Phone {
       case 'finance': {
         html += this.header('Finance');
         const e = s.economy;
-        html += `<div class="fin-grid"><div><span>Cash</span><strong>$${e.cash.toLocaleString()}</strong></div><div><span>Lifetime sales</span><strong>$${e.lifetimeRevenue.toLocaleString()}</strong></div><div><span>Spent</span><strong>$${e.lifetimeExpenses.toLocaleString()}</strong></div><div><span>Units sold</span><strong>${e.unitsSold}</strong></div><div><span>Daily wages</span><strong>$${s.employees.dailyWages}</strong></div><div><span>Daily upkeep</span><strong>$${PROPERTIES.filter((p) => s.properties.owns(p.id)).reduce((a, p) => a + p.upkeep, 0)}</strong></div></div>`;
+        // Bank & laundering: the card only spends clean money.
+        const nowAbs = t.day * 1440 + t.minutes;
+        html += `<div class="fin-grid"><div><span>Cash (dirty)</span><strong>$${e.cash.toLocaleString()}</strong></div><div><span>💳 Bank (clean)</span><strong>$${e.bank.toLocaleString()}</strong></div>`;
+        html += '</div><div class="mk-group">Laundering</div><p class="mk-note">Cars, property, upgrades and anything costing $250+ at Kwik Corner or in the Market is card-only. Put cash through a front to get it into the bank.</p>';
+        if (e.washing.length) html += e.washing.map((w) => `<div class="tx"><span>$${w.amount.toLocaleString()} via ${esc(w.via)}<em>clears in ${Math.max(0, Math.ceil(w.ready - nowAbs))} min</em></span><strong class="pos">⏳</strong></div>`).join('');
+        for (const f of FRONTS) {
+          const own = f.price === 0 || e.fronts.has(f.id);
+          const room = e.washRoom(f, t.day);
+          const locked = !!f.unlock && e.lifetimeRevenue < f.unlock;
+          html += `<div class="contact${locked ? ' locked' : ''}"><div class="contact-top"><strong>${esc(f.name)}</strong><span>${Math.round(f.fee * 100)}% cut · $${f.daily.toLocaleString()}/day</span></div><p class="small">${esc(f.desc)}</p><div class="emp-actions">`;
+          if (f.id === 'casino') html += `<span class="muted small">In person at the casino cage · $${room.toLocaleString()} left today</span><button class="pbtn" data-waypoint="37.5,9">Show on map</button>`;
+          else if (!own) html += locked ? `<span class="muted small">Unlocks at $${f.unlock!.toLocaleString()} lifetime sales</span>` : `<button class="pbtn ok" data-buyfront="${f.id}" ${e.cash < f.price ? 'disabled' : ''}>Buy for $${f.price.toLocaleString()} cash</button>`;
+          else html += `<span class="muted small">$${room.toLocaleString()} left today</span><input id="wash-${f.id}" class="wash-in" type="number" min="1" value="${Math.min(room, e.cash)}"><button class="pbtn ok" data-wash="${f.id}" ${room <= 0 || e.cash <= 0 ? 'disabled' : ''}>Launder</button>`;
+          html += '</div></div>';
+        }
+        html += `<div class="fin-grid">`;
+        html += `<div><span>Lifetime sales</span><strong>$${e.lifetimeRevenue.toLocaleString()}</strong></div><div><span>Spent</span><strong>$${e.lifetimeExpenses.toLocaleString()}</strong></div><div><span>Units sold</span><strong>${e.unitsSold}</strong></div><div><span>Daily wages</span><strong>$${s.employees.dailyWages}</strong></div><div><span>Daily upkeep</span><strong>$${PROPERTIES.filter((p) => s.properties.owns(p.id)).reduce((a, p) => a + p.upkeep, 0)}</strong></div></div>`;
         const days = [...e.daily].slice(-7);
         const max = Math.max(1, ...days.map(([, d]) => Math.max(d.rev, d.exp)));
         html += '<div class="mk-group">Last days</div><div class="bars">';
@@ -507,6 +524,12 @@ export class Phone {
       this.say(r.text);
     });
     on('[data-upgrade]', (b) => this.say(s.upgrades.buy(b.dataset.upgrade!)));
+    on('[data-buyfront]', (b) => this.say(s.economy.buyFront(b.dataset.buyfront!)));
+    on('[data-wash]', (b) => {
+      const f = FRONTS.find((x) => x.id === b.dataset.wash)!;
+      const v = Number(this.screen.querySelector<HTMLInputElement>(`#wash-${f.id}`)?.value) || 0;
+      this.say(s.economy.launder(f, v, t.day * 1440 + t.minutes, t.day).text);
+    });
     on('[data-orderfor]', (b) => {
       this.deliverTo = b.dataset.orderfor!;
       this.go('market');

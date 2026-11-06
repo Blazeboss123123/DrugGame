@@ -43,7 +43,12 @@ export class Upgrades {
     if (!u) return 'Unknown upgrade.';
     const reason = this.status(u);
     if (reason) return reason;
-    if (!this.svc.economy.spend(u.price, `Upgrade: ${u.name}`)) return `You need $${u.price.toLocaleString()}.`;
+    // Contractors want a card payment for anything this size.
+    const pay = this.svc.economy;
+    if (pay.needsCard(u.price)) {
+      const short = pay.cardShort(u.price);
+      if (short || !pay.payCard(u.price, `Upgrade: ${u.name}`)) return short ?? 'Card declined.';
+    } else if (!pay.spend(u.price, `Upgrade: ${u.name}`)) return `You need $${u.price.toLocaleString()}.`;
     this.owned.add(id);
     this.apply(id);
     this.svc.audio.play('ui');

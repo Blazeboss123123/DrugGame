@@ -1241,3 +1241,10 @@ kbd,
 .mk-note { font-size: 12px; color: #6b6458; margin: 2px 12px 8px; line-height: 1.4; }
 .wm-order.drop { border-left-color: #c98bff; }
 .mp-wait { color: #ffb347; font-weight: 700; }
+
+/* ---- bank & card */
+.hud .cash .bank { display: block; font: 600 12px var(--mono); font-style: normal; color: #9fd3ff; margin-top: 2px; }
+.ph-bank { display: block; font-style: normal; font-size: 11px; color: #3c6fa0; text-align: right; }
+.wall-bank { font: 600 14px var(--mono); color: #cfe6ff; margin-top: 2px; }
+.wash-in { width: 84px; padding: 5px 6px; border-radius: 8px; border: 1px solid #d8d1c4; font: 500 13px system-ui, sans-serif; }
+.cash-wash { font-size: 13px; display: grid; gap: 3px; margin: 4px 0 10px; }

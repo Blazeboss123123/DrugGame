@@ -219,7 +219,7 @@ export class Net {
 
   /** Sets every player's cash (yours included) to $0. Returns how many other players were hit. */
   wipeAllMoney(): number {
-    this.svc.economy.forfeit(this.svc.economy.cash, 'Money wiped');
+    this.svc.economy.wipe('Money wiped');
     if (!this.online) return 0;
     this.send({ t: 'wipe' });
     this.system("You wiped everyone's money.");
@@ -484,7 +484,7 @@ export class Net {
         if (!this.isHost) this.onWorldReset?.(String(m.name));
         break;
       case 'wipe': {
-        const lost = this.svc.economy.forfeit(this.svc.economy.cash, `Money wiped by ${m.name}`);
+        const lost = this.svc.economy.wipe(`Money wiped by ${m.name}`);
         this.system(`${m.name} wiped everyone's money.`);
         this.svc.ui.toast(`${m.name} wiped everyone's money${lost ? ` · you lost $${lost.toLocaleString()}` : ''}.`, 'warn');
         break;

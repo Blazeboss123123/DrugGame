@@ -1,4 +1,5 @@
 import type { Services } from '../core/Services';
+import { FRONTS } from '../economy/Economy';
 
 /**
  * Casino games played with real cash: slot machines, blackjack against the dealer, and Double Up,
@@ -452,6 +453,77 @@ export function openBlackjack(svc: Services) {
 }
 
 const cardValue = (c: Card) => (c.rank >= 11 && c.rank <= 13 ? 10 : c.rank === 14 ? 11 : c.rank);
+
+// ------------------------------------------------------------------ cashier (laundering) & ATM
+/**
+ * The casino cage: hand over dirty cash for chips, cash the chips out as a "winnings" cheque that
+ * clears into your bank an hour later. The house keeps a cut and won't take more than its limit a day.
+ */
+export function openCashier(svc: Services) {
+  const { overlay, body } = svc.ui.panels.shell('Cashier', 'Cash for chips, chips for a cheque · the house keeps 15%', true);
+  const front = FRONTS.find((f) => f.id === 'casino')!;
+  const eco = svc.economy;
+  const top = el('div', 'casino-top');
+  const wash = el('div', 'cash-wash');
+  const res = el('p', 'result');
+  const amounts = el('div', 'chip-row');
+  const atm = el('div', 'chip-row');
+  const now = () => svc.time.day * 1440 + svc.time.minutes;
+  let amount = 500;
+  const render = () => {
+    const room = eco.washRoom(front, svc.time.day);
+    top.innerHTML = `<span class="muted">Cash</span> <strong>${money(eco.cash)}</strong> <span class="muted">· Bank 💳</span> <strong>${money(eco.bank)}</strong> <span class="muted">· the cage takes ${money(room)} more today</span>`;
+    amounts.innerHTML = '';
+    for (const a of [100, 250, 500, 1000, 2500]) {
+      const b = el('button', `chip-btn${a === amount ? ' on' : ''}`, money(a)) as HTMLButtonElement;
+      b.disabled = a > eco.cash || a > room;
+      b.onclick = () => {
+        amount = a;
+        render();
+      };
+      amounts.appendChild(b);
+    }
+    wash.innerHTML = eco.washing.length
+      ? eco.washing.map((w) => `<div>${money(w.amount)} via ${w.via} · clears in ${Math.max(0, Math.ceil(w.ready - now()))} min</div>`).join('')
+      : '<div class="muted">Nothing clearing right now.</div>';
+    go.textContent = `Launder ${money(amount)} → ${money(Math.round(amount * (1 - front.fee)))} to your bank`;
+    go.disabled = amount > eco.cash || amount > room;
+    atm.innerHTML = '';
+    for (const a of [100, 500, 1000]) {
+      const b = el('button', 'chip-btn', `Withdraw ${money(a)}`) as HTMLButtonElement;
+      b.disabled = a > eco.bank;
+      b.onclick = () => {
+        eco.withdraw(a);
+        res.className = 'result good';
+        res.textContent = `ATM: ${money(a)} out of your bank as cash.`;
+        render();
+      };
+      atm.appendChild(b);
+    }
+  };
+  const go = el('button', 'btn primary') as HTMLButtonElement;
+  go.onclick = () => {
+    const r = eco.launder(front, amount, now(), svc.time.day);
+    res.className = `result ${r.ok ? 'good' : 'bad'}`;
+    res.textContent = r.text;
+    if (r.ok) svc.audio.play('paper');
+    render();
+  };
+  body.append(
+    top,
+    el('p', 'muted', 'Your card only spends clean money in the bank. Dirty cash from deals has to be laundered first: buy chips here and cash them out as a winnings cheque. Clean money lands in your bank about an hour later. For bigger amounts and a smaller cut, buy a front business from the Finance app on your phone.'),
+    el('div', 'eyebrow', 'Launder'),
+    amounts,
+    go,
+    res,
+    el('div', 'eyebrow', 'Clearing'),
+    wash,
+    el('div', 'eyebrow', 'ATM (bank → cash)'),
+    atm,
+  );
+  render();
+  svc.ui.present(overlay);
+}
 
 // ------------------------------------------------------------------ double up
 export function openDoubleUp(svc: Services) {

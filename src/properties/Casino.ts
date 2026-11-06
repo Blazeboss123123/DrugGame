@@ -3,7 +3,7 @@ import type { Services } from '../core/Services';
 import { SimpleInteractable, ownMaterial } from '../interaction/Interactable';
 import { Door } from '../interaction/Objects';
 import type { CharacterInstance, CharacterPool, Outfit } from '../npc/Characters';
-import { openBlackjack, openDoubleUp, openSlots } from '../ui/CasinoGames';
+import { openBlackjack, openCashier, openDoubleUp, openSlots } from '../ui/CasinoGames';
 import type { Heightmap, Pad } from '../world/Heightmap';
 import { letterTexture } from '../world/Textures';
 import { BuildKit, type Opening } from './BuildKit';
@@ -274,6 +274,18 @@ export class Casino {
     svc.physics.tag(dc, { interactable: dut });
     svc.interaction.register(dut);
     this.staff.push({ pos: this.L(0, 0, 6.9), yaw: Math.PI, outfit: 'Suit', inst: null });
+    // Cashier cage: buy chips with cash, cash out as a winnings cheque to the bank (laundering), and an ATM.
+    const cashTex = letterTexture('CASHIER · ATM', '#120a16', '#3ddc84', 512, 96);
+    const cashSign = ownMaterial(new THREE.Mesh(new THREE.PlaneGeometry(5, 0.95), new THREE.MeshStandardMaterial({ map: cashTex, emissive: 0xffffff, emissiveMap: cashTex, emissiveIntensity: 1.3 })));
+    cashSign.position.copy(this.L(11.25, 2.15, 9.38));
+    cashSign.rotation.y = Math.PI;
+    this.group.add(cashSign);
+    const cashier = new SimpleInteractable('casino:cashier', () => (this.open ? 'Cashier: cash out to your bank · ATM' : 'Cashier closed · opens 20:00'), () => this.play(() => openCashier(svc)), [cashSign], 3);
+    const cp = this.L(11.25, 1.0, 8.4);
+    const cc = svc.physics.box(cp.x, cp.y, cp.z, 3.3, 0.7, 0.7);
+    cc.setSensor(true);
+    svc.physics.tag(cc, { interactable: cashier });
+    svc.interaction.register(cashier);
 
     // Glass entrance door: locked until 20:00 (you can always get out).
     const dm = new THREE.MeshStandardMaterial({ color: 0xd9a63a, roughness: 0.2, metalness: 0.6, transparent: true, opacity: 0.55 });

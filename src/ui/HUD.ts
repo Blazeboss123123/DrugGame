@@ -42,6 +42,7 @@ export class HUD {
   private bannerTimer = 0;
   private hotbar!: HTMLElement;
   private cash!: HTMLElement;
+  private bankEl!: HTMLElement;
   private wanted!: HTMLElement;
   private dealTrack!: HTMLElement;
   private notifyEl!: HTMLElement;
@@ -81,7 +82,7 @@ export class HUD {
       <div class="waypoint" hidden><span class="wp-arrow">▲</span><span class="wp-text"></span></div>
       <div class="chat-feed"></div>
       <input class="chat-input" id="chat-input" maxlength="200" placeholder="Say something to the room (Enter to send, Esc to cancel)" hidden>
-      <div class="bottom-bar"><div class="hotbar"></div><div class="cash"><span>Cash</span><strong>$0</strong></div></div>`;
+      <div class="bottom-bar"><div class="hotbar"></div><div class="cash"><span>Cash</span><strong>$0</strong><em class="bank" title="Clean money in the bank: what your card spends">💳 $0</em></div></div>`;
     layer.appendChild(r);
     this.root = r;
     const q = (s: string) => r.querySelector(s) as HTMLElement;
@@ -103,6 +104,7 @@ export class HUD {
     this.hint = q('.hint');
     this.hotbar = q('.hotbar');
     this.cash = q('.cash strong');
+    this.bankEl = q('.cash .bank');
     this.wanted = q('.wanted');
     this.dealTrack = q('.deal-track');
     this.notifyEl = q('.notify');
@@ -123,10 +125,11 @@ export class HUD {
     svc.inventory.onChange(() => this.renderHotbar());
     svc.bus.on('money:changed', (m) => {
       this.cash.textContent = `$${m.cash.toLocaleString()}`;
+      this.bankEl.textContent = `💳 $${(m.bank ?? svc.economy.bank).toLocaleString()}`;
       if (m.delta) {
         const f = document.createElement('span');
         f.className = `cash-float ${m.delta > 0 ? 'pos' : 'neg'}`;
-        f.textContent = `${m.delta > 0 ? '+' : '−'}$${Math.abs(m.delta).toLocaleString()}`;
+        f.textContent = `${m.card ? '💳 ' : ''}${m.delta > 0 ? '+' : '−'}$${Math.abs(m.delta).toLocaleString()}`;
         this.cash.parentElement!.appendChild(f);
         setTimeout(() => f.remove(), 1600);
       }

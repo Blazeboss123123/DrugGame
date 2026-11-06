@@ -77,8 +77,18 @@ export class Market {
       const reason = this.canBuy(it.id, site);
       if (reason) return { ok: false, text: `${ITEMS[it.id].name}: ${reason}.` };
     }
-    const total = items.reduce((sum, it) => sum + ITEMS[it.id].price * it.qty, 0);
-    if (!this.svc.economy.spend(total, `Market order #${this.nextId}`)) return { ok: false, text: `You need $${total} (you have $${this.svc.economy.cash}).` };
+    // Big-ticket lines ($250+ each) go on the card; the rest is cash on delivery.
+    const eco = this.svc.economy;
+    const cardTotal = items.filter((it) => eco.needsCard(ITEMS[it.id].price)).reduce((sum, it) => sum + ITEMS[it.id].price * it.qty, 0);
+    const cashTotal = items.filter((it) => !eco.needsCard(ITEMS[it.id].price)).reduce((sum, it) => sum + ITEMS[it.id].price * it.qty, 0);
+    const total = cardTotal + cashTotal;
+    if (cardTotal) {
+      const short = eco.cardShort(cardTotal);
+      if (short) return { ok: false, text: short };
+    }
+    if (cashTotal > eco.cash) return { ok: false, text: `You need $${cashTotal} in cash (you have $${eco.cash}).` };
+    if (cardTotal) eco.payCard(cardTotal, `Market order #${this.nextId} (equipment)`);
+    if (cashTotal) eco.spend(cashTotal, `Market order #${this.nextId}`);
     const d: Delivery = { id: this.nextId++, site, items, arrives: this.now() + DELIVERY_MINUTES, total };
     this.pending.push(d);
     this.svc.bus.emit('objective:signal', { id: 'order' });
@@ -118,8 +128,14 @@ export class Market {
     if (reason) return { ok: false, text: reason };
     const inv = this.svc.inventory;
     if (inv.space(id) < qty) return { ok: false, text: 'Your backpack is full.' };
-    const total = Math.round(def.price * markup) * qty;
-    if (!this.svc.economy.spend(total, `Corner shop: ${qty} × ${def.name}`)) return { ok: false, text: `You need $${total} (you have $${this.svc.economy.cash}).` };
+    const unit = Math.round(def.price * markup);
+    const total = unit * qty;
+    const eco = this.svc.economy;
+    if (eco.needsCard(unit)) {
+      // Kwik Corner only takes cards for the expensive stuff.
+      const short = eco.cardShort(total);
+      if (short || !eco.payCard(total, `Kwik Corner: ${qty} × ${def.name}`)) return { ok: false, text: short ?? 'Card declined.' };
+    } else if (!eco.spend(total, `Corner shop: ${qty} × ${def.name}`)) return { ok: false, text: `You need $${total} in cash (you have $${eco.cash}).` };
     inv.add(id, qty);
     this.svc.audio.play('paper');
     return { ok: true, text: `Bought ${qty} × ${def.name} for $${total}.${def.kind === 'equipment' ? ' Hold it and press E to place it.' : ''}` };
