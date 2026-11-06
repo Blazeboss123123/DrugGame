@@ -35,7 +35,8 @@ const server = createServer(async (req, res) => {
         .map(([code, r]) => ({
           code,
           name: r.name,
-          host: r.players.get(r.host)?.name ?? '',
+          host: r.players.get(r.host)?.name ?? (r.waiting ? 'host away' : ''),
+          waiting: !!r.waiting,
           players: r.players.size,
           max: MAX_PER_ROOM,
           names: [...r.players.values()].map((p) => p.name),
@@ -170,10 +171,23 @@ const rooms = new Map();
 function roomOf(code) {
   let r = rooms.get(code);
   if (!r) {
-    r = { players: new Map(), host: null, name: '', public: true, createdAt: Date.now(), day: 1, minutes: 0, cheats: true, wid: '' };
+    r = { players: new Map(), host: null, name: '', public: true, createdAt: Date.now(), day: 1, minutes: 0, cheats: true, wid: '', hostKey: '', waiting: false, waitTimer: null };
     rooms.set(code, r);
   }
   return r;
+}
+
+/** How long a room waits for its host to reconnect before closing. */
+const HOST_WAIT = 150000;
+
+function startWait(room, code) {
+  clearTimeout(room.waitTimer);
+  room.waitTimer = setTimeout(() => {
+    if (!room.waiting) return;
+    broadcast(room, { t: 'closed', text: `${room.name} closed: the host didn't come back.` });
+    for (const p of room.players.values()) p.ws.close();
+    if (rooms.get(code) === room) rooms.delete(code);
+  }, HOST_WAIT);
 }
 
 function broadcast(room, msg, except) {
@@ -195,7 +209,7 @@ server.on('upgrade', (req, sock) => {
   sock.setNoDelay(true);
   const ws = new Socket(sock);
   const code = clean(url.searchParams.get('room') || 'HARLOW', 12).toUpperCase() || 'HARLOW';
-  const room = roomOf(code);
+  let room = roomOf(code);
   if (room.players.size >= MAX_PER_ROOM) {
     ws.send({ t: 'error', text: `Room ${code} is full (${MAX_PER_ROOM} players).` });
     ws.close();
@@ -205,11 +219,28 @@ server.on('upgrade', (req, sock) => {
   const me = { id, ws, name: 'Player', outfit: 'Casual_Hoodie', state: null };
   ws.onmessage = (m) => {
     switch (m.t) {
-      case 'hello':
+      case 'hello': {
         me.name = clean(m.name, 20) || 'Player';
         me.outfit = clean(m.outfit, 24) || 'Casual_Hoodie';
-        // The first player in a room sets its name and whether it's listed publicly.
-        if (!room.players.size) {
+        // The room may have closed and reopened since this socket connected.
+        room = roomOf(code);
+        // role: 'host' (hosting a world), 'join' (joining; an empty code starts a new world),
+        // 'rejoin' (reconnecting after a drop: never takes over as host, waits for them instead).
+        const role = m.role === 'host' || m.role === 'rejoin' ? m.role : 'join';
+        const key = clean(m.hostKey, 80);
+        const fresh = !room.players.size && !room.waiting;
+        if (role === 'host' && room.host && room.players.has(room.host)) {
+          ws.send({ t: 'error', text: `The code ${code} is already in use by another world. Pick another code.` });
+          ws.close();
+          return;
+        }
+        if (role === 'host' && room.waiting && room.hostKey && room.hostKey !== key) {
+          ws.send({ t: 'error', text: `${room.name} is waiting for its own host to come back.` });
+          ws.close();
+          return;
+        }
+        if (fresh) {
+          // The first player sets the world's name, id and listing.
           room.name = clean(m.world, 32) || `${me.name}'s world`;
           room.public = m.public !== false;
           room.createdAt = Date.now();
@@ -218,10 +249,29 @@ server.on('upgrade', (req, sock) => {
           room.wid = clean(m.wid, 40) || `room:${code}`;
         }
         room.players.set(id, me);
-        if (!room.host) room.host = id;
-        ws.send({ t: 'welcome', id, room: code, world: room.name, public: room.public, host: room.host, cheats: room.cheats, wid: room.wid, day: room.day, minutes: room.minutes, players: [...room.players.values()].filter((p) => p.id !== id).map((p) => ({ id: p.id, name: p.name, outfit: p.outfit })) });
+        if (role === 'host' || (fresh && role === 'join')) {
+          // Hosting (or reclaiming the world after a drop).
+          const back = room.waiting;
+          room.host = id;
+          room.hostKey = key;
+          room.waiting = false;
+          clearTimeout(room.waitTimer);
+          if (m.wid) room.wid = clean(m.wid, 40);
+          if (m.world) room.name = clean(m.world, 32) || room.name;
+          if (back) broadcast(room, { t: 'host', id, name: me.name }, id);
+        } else if (!room.host) {
+          // Reconnecting before the host is back: hold the room open for them.
+          if (!room.waiting) {
+            room.waiting = true;
+            room.name = room.name || clean(m.world, 32) || 'World';
+            room.wid = room.wid || clean(m.wid, 40) || `room:${code}`;
+          }
+          startWait(room, code);
+        }
+        ws.send({ t: 'welcome', id, room: code, world: room.name, public: room.public, host: room.host ?? '', waiting: room.waiting, cheats: room.cheats, wid: room.wid, day: room.day, minutes: room.minutes, players: [...room.players.values()].filter((p) => p.id !== id).map((p) => ({ id: p.id, name: p.name, outfit: p.outfit })) });
         broadcast(room, { t: 'join', id, name: me.name, outfit: me.outfit }, id);
         break;
+      }
       case 'st':
         me.state = m.s;
         break;
@@ -288,10 +338,19 @@ server.on('upgrade', (req, sock) => {
     if (!room.players.delete(id)) return;
     broadcast(room, { t: 'leave', id });
     if (room.host === id) {
-      room.host = room.players.keys().next().value ?? null;
-      if (room.host) broadcast(room, { t: 'host', id: room.host });
+      // The world lives in the host's game, so it can't carry on without them: keep the room open
+      // for a couple of minutes so they can reconnect (and everyone carries on where they were).
+      room.host = null;
+      if (room.players.size) {
+        room.waiting = true;
+        broadcast(room, { t: 'hostaway', name: me.name, seconds: HOST_WAIT / 1000 });
+        startWait(room, code);
+      }
     }
-    if (!room.players.size) rooms.delete(code);
+    if (!room.players.size) {
+      clearTimeout(room.waitTimer);
+      if (rooms.get(code) === room) rooms.delete(code);
+    }
   };
 });
 

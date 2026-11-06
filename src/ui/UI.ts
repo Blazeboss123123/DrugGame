@@ -34,6 +34,7 @@ export interface UIHost {
   setCheatsAllowed(on: boolean): boolean;
   wipeAllMoney(): string;
   resetProgress(): string;
+  hostableGames(): Promise<{ slot: number; day: number; cash: number; wid: string; current: boolean }[]>;
 }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] => {
@@ -287,6 +288,11 @@ export class UI {
     if (dragLook) p.appendChild(el('div', 'build-note', 'If the mouse is not captured, click the view or hold the left button and drag to look.'));
     o.appendChild(p);
     this.setModal(o);
+  }
+
+  /** Your saved games that can be hosted as a multiplayer world. */
+  hostableGames() {
+    return this.host.hostableGames();
   }
 
   openSettings(fromTitle: boolean) {

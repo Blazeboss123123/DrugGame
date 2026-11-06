@@ -21,6 +21,16 @@ export interface NetState {
   v?: { type: VehicleType; c: number; p: [number, number, number]; yaw: number; pitch: number; roll: number } | null;
 }
 
+export interface JoinOpts {
+  world?: string;
+  public?: boolean;
+  wid?: string;
+  /** 'host': hosting a world · 'join': joining (an unused code starts a new world) · 'rejoin': after a drop. */
+  role?: 'host' | 'join' | 'rejoin';
+  /** Hosting your own saved game from this slot. */
+  slot?: number;
+}
+
 export interface PublicRoom {
   code: string;
   name: string;
@@ -31,6 +41,7 @@ export interface PublicRoom {
   day: number;
   minutes: number;
   since: number;
+  waiting?: boolean;
 }
 
 export interface ChatLine {
@@ -147,7 +158,7 @@ export class Net {
   /** This world's id: your money, backpack and progress are saved per world. */
   wid = '';
   /** Called on joining, before the world syncs: loads your progress for this world. */
-  onWelcome?: (info: { wid: string; world: string; host: boolean }) => Promise<void>;
+  onWelcome?: (info: { wid: string; world: string; host: boolean; slot?: number }) => Promise<void>;
   /** Called when the host resets the world for everyone. */
   onWorldReset?: (by: string) => void;
   /** Called after leaving a world (or losing the connection). */
@@ -227,8 +238,37 @@ export class Net {
     }
   }
 
-  connect(url: string, room: string, name: string, outfit: Outfit, opts: { world?: string; public?: boolean; wid?: string } = {}): Promise<string | null> {
+  connect(url: string, room: string, name: string, outfit: Outfit, opts: JoinOpts = {}): Promise<string | null> {
     this.disconnect();
+    this.last = { url, room, name, outfit, opts };
+    return this.open(url, room, name, outfit, opts);
+  }
+
+  /** Last room joined, for reconnecting after a drop. */
+  private last: { url: string; room: string; name: string; outfit: Outfit; opts: JoinOpts } | null = null;
+  private retry = 0;
+  private retryTimer = 0;
+  /** True while trying to get back into the room after the connection dropped. */
+  reconnecting = false;
+  /** The save slot being hosted as a world (hosting your own game), if any. */
+  hostSlot: number | undefined;
+
+  /** A per-browser secret: proves it's really the host coming back to their world. */
+  private hostKey(wid: string) {
+    let secret = '';
+    try {
+      secret = localStorage.getItem('ue.secret') || '';
+      if (!secret) {
+        secret = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        localStorage.setItem('ue.secret', secret);
+      }
+    } catch {
+      secret = 'anon';
+    }
+    return `${secret}:${wid}`;
+  }
+
+  private open(url: string, room: string, name: string, outfit: Outfit, opts: JoinOpts): Promise<string | null> {
     this.name = name.trim().slice(0, 20) || 'Player';
     this.outfit = outfit;
     this.room = room.trim().toUpperCase().slice(0, 12) || 'HARLOW';
@@ -244,7 +284,9 @@ export class Net {
       try {
         const ws = new WebSocket(`${url}?room=${encodeURIComponent(this.room)}`);
         this.ws = ws;
-        ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, outfit: this.outfit, world: opts.world, public: opts.public, wid: opts.wid, cheats: this.svc.settings.allowCheats }));
+        this.hostSlot = opts.slot;
+        ws.onopen = () =>
+          ws.send(JSON.stringify({ t: 'hello', name: this.name, outfit: this.outfit, world: opts.world, public: opts.public, wid: opts.wid, role: opts.role ?? 'join', hostKey: opts.wid ? this.hostKey(opts.wid) : '', cheats: this.svc.settings.allowCheats }));
         ws.onmessage = (e) => {
           let m: Record<string, unknown>;
           try {
@@ -264,10 +306,17 @@ export class Net {
           done(this.error);
         };
         ws.onclose = () => {
+          // An old socket closing late must never tear down a newer connection.
+          if (this.ws !== ws) return;
           const was = this.status;
+          done(this.error || 'Connection closed.');
+          if (was === 'online' && this.last && !this.closedByServer) {
+            // Dropped (server restart, network blip): keep the world as it is and get back in.
+            this.dropped();
+            return;
+          }
           this.cleanup();
           if (was === 'online') this.system('Disconnected from the server.');
-          done(this.error || 'Connection closed.');
         };
         setTimeout(() => done(this.status === 'online' ? null : 'Timed out connecting to the server.'), 8000);
       } catch (err) {
@@ -279,7 +328,53 @@ export class Net {
     });
   }
 
+  /** The server closed the room on purpose (host never came back): don't try to reconnect. */
+  private closedByServer = false;
+
+  /** Connection dropped: try to rejoin the same world for a couple of minutes before giving up. */
+  private dropped() {
+    const last = this.last!;
+    this.ws = null;
+    this.status = 'connecting';
+    this.reconnecting = true;
+    for (const p of this.players.values()) p.dispose(this.pool);
+    for (const p of this.players.values()) {
+      const i = this.svc.interaction.items.indexOf(p);
+      if (i >= 0) this.svc.interaction.items.splice(i, 1);
+    }
+    this.players.clear();
+    this.retry = 0;
+    this.svc.ui.toast('Connection lost. Getting you back into the world…', 'warn');
+    this.system('Connection lost. Reconnecting…');
+    const attempt = async () => {
+      if (!this.reconnecting) return;
+      this.retry++;
+      // Hosts reclaim their world; everyone else waits for the host rather than taking over.
+      const role = this.wasHost ? 'host' : 'rejoin';
+      const err = await this.open(last.url, last.room, last.name, last.outfit, { ...last.opts, role, wid: this.wid || last.opts.wid, world: this.world || last.opts.world });
+      if (!err) {
+        this.reconnecting = false;
+        this.svc.ui.toast('Reconnected.', 'good');
+        return;
+      }
+      if (/already in use|waiting for its own host/.test(err) || this.retry >= 40) {
+        this.reconnecting = false;
+        this.svc.ui.toast(`Couldn't get back in: ${err}`, 'warn');
+        this.cleanup(true);
+        return;
+      }
+      this.retryTimer = window.setTimeout(() => void attempt(), 3000);
+    };
+    this.retryTimer = window.setTimeout(() => void attempt(), 1500);
+  }
+
+  /** Whether you were the host when the connection dropped. */
+  private wasHost = false;
+
   disconnect() {
+    this.reconnecting = false;
+    clearTimeout(this.retryTimer);
+    this.closedByServer = false;
     if (this.ws) {
       try {
         this.ws.close();
@@ -290,8 +385,8 @@ export class Net {
     this.cleanup();
   }
 
-  private cleanup() {
-    const was = this.status === 'online';
+  private cleanup(force = false) {
+    const was = this.status === 'online' || force;
     // Return anything still held for unanswered trades.
     for (const [tid] of this.escrow) this.refund(tid);
     for (const p of this.players.values()) p.dispose(this.pool);
@@ -329,7 +424,8 @@ export class Net {
     switch (m.t) {
       case 'welcome': {
         this.id = String(m.id);
-        this.host = String(m.host);
+        this.host = String(m.host || '');
+        this.closedByServer = false;
         this.world = String(m.world ?? this.room);
         this.isPublic = m.public !== false;
         this.cheatsAllowed = m.cheats !== false;
@@ -338,11 +434,13 @@ export class Net {
         for (const p of m.players as { id: string; name: string; outfit: string }[]) this.add(p.id, p.name, p.outfit);
         // Load your progress for this world first, then sync with the room.
         const ws = this.ws;
-        const ready = this.onWelcome ? this.onWelcome({ wid: this.wid, world: this.world, host: this.isHost }) : Promise.resolve();
+        this.wasHost = this.isHost;
+        const ready = this.onWelcome ? this.onWelcome({ wid: this.wid, world: this.world, host: this.isHost, slot: this.isHost ? this.hostSlot : undefined }) : Promise.resolve();
+        if (m.waiting && !this.isHost) this.svc.ui.toast(`${this.world}: the host is reconnecting. You'll be back in their world as soon as they are.`, 'info');
         void ready.then(() => {
           if (this.ws !== ws || !this.online) return;
           // Guests take the room's clock straight away (the host keeps its own).
-          if (!this.isHost && Number(m.day) > 0) {
+          if (!this.isHost && this.host && Number(m.day) > 0) {
             this.svc.time.day = Number(m.day);
             this.svc.time.minutes = Number(m.minutes) || 0;
           }
@@ -405,8 +503,23 @@ export class Net {
       case 'wsnap':
         this.sync.applySnapshot(m.ops as WorldOp[]);
         break;
+      case 'hostaway':
+        this.host = '';
+        this.system(`${m.name} (the host) lost connection. Waiting for them to come back…`);
+        this.svc.ui.toast(`${m.name}, the host, lost connection. Hang on: the world stays open a few minutes for them to come back.`, 'warn');
+        break;
+      case 'closed':
+        this.closedByServer = true;
+        this.svc.ui.toast(String(m.text), 'warn');
+        break;
       case 'host':
         this.host = String(m.id);
+        if (!this.isHost) {
+          // The host is back: pick up their world exactly as it is now.
+          this.system(`${m.name ?? 'The host'} is back.`);
+          this.svc.ui.toast(`${m.name ?? 'The host'} is back. Carry on!`, 'good');
+          this.send({ t: 'wreq' });
+        }
         if (this.isHost) {
           this.system('You are now the host. The room now plays in your world.');
           // Keep the room's current time, but run it at your own day length from now on.

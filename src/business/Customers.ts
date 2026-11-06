@@ -721,7 +721,7 @@ export class Customers {
     if (this.nextDealAt === 0) this.nextDealAt = now + 30;
     // In multiplayer only the host's game generates deal requests; everyone shares them.
     const net = this.svc.net;
-    if (this.customers.length && now >= this.nextDealAt && (!net?.online || net.isHost)) {
+    if (this.customers.length && now >= this.nextDealAt && (!net?.online || net.isHost) && !net?.reconnecting) {
       this.newDeal();
       this.nextDealAt = now + (this.rng.range(40, 100) / Math.min(3, 1 + this.customers.length * 0.15)) * (this.svc.upgrades?.has('burner') ? 0.6 : 1);
     }

@@ -710,7 +710,7 @@ export class Panels {
     me.appendChild(outfitRow);
 
     const out = el('p', 'result');
-    const join = async (code: string, opts: { world?: string; public?: boolean; wid?: string } = {}) => {
+    const join = async (code: string, opts: import('../net/Net').JoinOpts = {}) => {
       out.className = 'result';
       out.textContent = `Connecting to ${opts.world ?? code}…`;
       remember({ room: code, world: opts.world ?? saved.world, public: opts.public ?? saved.public });
@@ -767,11 +767,11 @@ export class Panels {
             const row = el(
               'div',
               'mp-world',
-              `<div class="mp-world-main"><strong>${escapeHtml(w.name)}</strong><span class="muted small">Hosted by ${escapeHtml(w.host)} · Day ${w.day}, ${String(h).padStart(2, '0')}:${mm} · code ${w.code}</span><span class="mp-names">${w.names.map((n) => `<i>${escapeHtml(n)}</i>`).join('')}</span></div><div class="mp-world-side"><span class="mp-count${w.players >= w.max ? ' full' : ''}">${w.players}/${w.max}</span></div>`,
+              `<div class="mp-world-main"><strong>${escapeHtml(w.name)}</strong><span class="muted small">${w.waiting ? '<b class="mp-wait">Host reconnecting</b> · ' : `Hosted by ${escapeHtml(w.host)} · `}Day ${w.day}, ${String(h).padStart(2, '0')}:${mm} · code ${w.code}</span><span class="mp-names">${w.names.map((n) => `<i>${escapeHtml(n)}</i>`).join('')}</span></div><div class="mp-world-side"><span class="mp-count${w.players >= w.max ? ' full' : ''}">${w.players}/${w.max}</span></div>`,
             );
             const b = el('button', `btn ${mine ? '' : 'primary'}`, mine ? 'You\u2019re here' : w.players >= w.max ? 'Full' : 'Join') as HTMLButtonElement;
             b.disabled = mine || w.players >= w.max;
-            b.onclick = () => void join(w.code, { world: w.name });
+            b.onclick = () => void join(w.code, { world: w.name, role: 'join' });
             row.querySelector('.mp-world-side')!.appendChild(b);
             list.appendChild(row);
           }
@@ -794,10 +794,31 @@ export class Panels {
         fresh.appendChild(el('p', 'muted', `Everyone starts from scratch here: new money, empty backpacks, a bare house. Your single-player save isn't touched. Friends can join from the browser or with the code <strong>${code}</strong>.`));
         const go = el('button', 'btn primary', 'Start a new world') as HTMLButtonElement;
         go.id = 'mp-host-new';
-        go.onclick = () => void join(code, { world: world.value.trim() || `${name.value}'s world`, public: pub.checked, wid: `w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}` });
+        go.onclick = () => void join(code, { world: world.value.trim() || `${name.value}'s world`, public: pub.checked, wid: `w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, role: 'host' });
         fresh.appendChild(go);
         pane.appendChild(fresh);
-        const mine = hostedWorlds();
+        // Your own saved game, hosted as it is (friends join you in it with their own money and backpacks).
+        const own = el('div', 'mp-list');
+        pane.appendChild(own);
+        void this.ui.hostableGames().then((games) => {
+          if (!games.length || !own.isConnected) return;
+          own.appendChild(el('div', 'section-label', 'Host your own game'));
+          for (const gm of games) {
+            const prev = hostedWorlds().find((w) => w.wid === gm.wid);
+            const label = prev?.name ?? `${name.value}'s game`;
+            const row = el(
+              'div',
+              'mp-world',
+              `<div class="mp-world-main"><strong>${gm.current ? 'Your current game' : `Save slot ${gm.slot}`}</strong><span class="muted small">Day ${gm.day} · $${gm.cash.toLocaleString()} · slot ${gm.slot}${prev ? ` · code ${escapeHtml(prev.code)}` : ''}</span></div><div class="mp-world-side"></div>`,
+            );
+            const b = el('button', 'btn primary', 'Host this game') as HTMLButtonElement;
+            b.onclick = () => void join(prev?.code ?? code, { world: world.value.trim() && world.value.trim() !== `${name.value}'s world` ? world.value.trim() : label, public: pub.checked, wid: gm.wid, slot: gm.slot, role: 'host' });
+            row.querySelector('.mp-world-side')!.appendChild(b);
+            own.appendChild(row);
+          }
+          own.appendChild(el('p', 'muted', 'Everything you’ve built is there; your progress keeps saving to that slot. If you lose connection, the world waits for you to come back.'));
+        });
+        const mine = hostedWorlds().filter((w) => w.slot === undefined);
         if (mine.length) {
           const cont = el('div', 'mp-list');
           pane.appendChild(el('div', 'section-label', 'Carry on with a world you hosted'));
@@ -808,7 +829,7 @@ export class Panels {
               `<div class="mp-world-main"><strong>${escapeHtml(w.name)}</strong><span class="muted small">Day ${w.day} · your cash there $${w.cash.toLocaleString()} · code ${escapeHtml(w.code)} · last played ${new Date(w.savedAt).toLocaleDateString()}</span></div><div class="mp-world-side"></div>`,
             );
             const b = el('button', 'btn', 'Host again') as HTMLButtonElement;
-            b.onclick = () => void join(w.code, { world: w.name, public: pub.checked, wid: w.wid });
+            b.onclick = () => void join(w.code, { world: w.name, public: pub.checked, wid: w.wid, role: 'host' });
             row.querySelector('.mp-world-side')!.appendChild(b);
             cont.appendChild(row);
           }

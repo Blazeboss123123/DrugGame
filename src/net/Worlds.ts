@@ -7,6 +7,8 @@ export interface HostedWorld {
   day: number;
   cash: number;
   savedAt: number;
+  /** Set when the world is your own saved game (hosted from that slot). */
+  slot?: number;
 }
 
 /** Worlds you've hosted, so you can carry on with one later (newest first). */
