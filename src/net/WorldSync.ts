@@ -97,6 +97,11 @@ export class WorldSync {
     return this.stash?.cust ?? this.svc.customers.toJSON();
   }
 
+  /** Progress reset while visiting: your own (stashed) equipment and customers start over too. */
+  resetOwn(prod: unknown, cust: unknown) {
+    if (this.stash) this.stash = { prod, cust };
+  }
+
   private restoreOwn() {
     if (!this.stash) return;
     this.applying = true;
@@ -120,10 +125,8 @@ export class WorldSync {
 
   /** Disconnected: guests get their own world back. */
   stop() {
-    if (this.stash) {
-      this.restoreOwn();
-      this.svc.ui.toast('Back in your own world.', 'info');
-    }
+    // (The game then switches you back to your own save and says so.)
+    if (this.stash) this.restoreOwn();
     this.ready = false;
     this.known.clear();
     this.sentVariants.clear();

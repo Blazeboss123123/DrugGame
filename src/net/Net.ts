@@ -144,6 +144,14 @@ export class Net {
   onTimeRequest?: (hour: number) => void;
   /** Shared equipment, plants and storage for everyone in the room. */
   readonly sync: WorldSync;
+  /** This world's id: your money, backpack and progress are saved per world. */
+  wid = '';
+  /** Called on joining, before the world syncs: loads your progress for this world. */
+  onWelcome?: (info: { wid: string; world: string; host: boolean }) => Promise<void>;
+  /** Called when the host resets the world for everyone. */
+  onWorldReset?: (by: string) => void;
+  /** Called after leaving a world (or losing the connection). */
+  onLeft?: () => void;
   /** Whether the host allows cheats in this room. */
   cheatsAllowed = true;
 
@@ -190,6 +198,14 @@ export class Net {
     this.send({ t: 'cfg', cheats: on });
   }
 
+  /** Host: tell everyone the world was reset, and send the (now empty) world. */
+  broadcastReset() {
+    if (!this.isHost) return;
+    this.send({ t: 'w', ops: this.sync.snapshot(), reset: true });
+    this.send({ t: 'reset' });
+    this.system('You reset the world. Everyone starts over.');
+  }
+
   /** Sets every player's cash (yours included) to $0. Returns how many other players were hit. */
   wipeAllMoney(): number {
     this.svc.economy.forfeit(this.svc.economy.cash, 'Money wiped');
@@ -211,7 +227,7 @@ export class Net {
     }
   }
 
-  connect(url: string, room: string, name: string, outfit: Outfit, opts: { world?: string; public?: boolean } = {}): Promise<string | null> {
+  connect(url: string, room: string, name: string, outfit: Outfit, opts: { world?: string; public?: boolean; wid?: string } = {}): Promise<string | null> {
     this.disconnect();
     this.name = name.trim().slice(0, 20) || 'Player';
     this.outfit = outfit;
@@ -228,7 +244,7 @@ export class Net {
       try {
         const ws = new WebSocket(`${url}?room=${encodeURIComponent(this.room)}`);
         this.ws = ws;
-        ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, outfit: this.outfit, world: opts.world, public: opts.public, cheats: this.svc.settings.allowCheats }));
+        ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: this.name, outfit: this.outfit, world: opts.world, public: opts.public, wid: opts.wid, cheats: this.svc.settings.allowCheats }));
         ws.onmessage = (e) => {
           let m: Record<string, unknown>;
           try {
@@ -275,6 +291,7 @@ export class Net {
   }
 
   private cleanup() {
+    const was = this.status === 'online';
     // Return anything still held for unanswered trades.
     for (const [tid] of this.escrow) this.refund(tid);
     for (const p of this.players.values()) p.dispose(this.pool);
@@ -288,6 +305,7 @@ export class Net {
     this.status = 'offline';
     // Back to your own clock speed.
     this.svc.time.setDayLength(this.svc.settings.dayLength);
+    if (was) this.onLeft?.();
     this.onChange?.();
   }
 
@@ -315,14 +333,21 @@ export class Net {
         this.world = String(m.world ?? this.room);
         this.isPublic = m.public !== false;
         this.cheatsAllowed = m.cheats !== false;
-        // Guests take the room's clock straight away (the host keeps its own).
-        if (String(m.id) !== String(m.host) && Number(m.day) > 0) {
-          this.svc.time.day = Number(m.day);
-          this.svc.time.minutes = Number(m.minutes) || 0;
-        }
+        this.wid = String(m.wid || `room:${m.room}`);
         this.status = 'online';
         for (const p of m.players as { id: string; name: string; outfit: string }[]) this.add(p.id, p.name, p.outfit);
-        this.sync.start(this.isHost);
+        // Load your progress for this world first, then sync with the room.
+        const ws = this.ws;
+        const ready = this.onWelcome ? this.onWelcome({ wid: this.wid, world: this.world, host: this.isHost }) : Promise.resolve();
+        void ready.then(() => {
+          if (this.ws !== ws || !this.online) return;
+          // Guests take the room's clock straight away (the host keeps its own).
+          if (!this.isHost && Number(m.day) > 0) {
+            this.svc.time.day = Number(m.day);
+            this.svc.time.minutes = Number(m.minutes) || 0;
+          }
+          this.sync.start(this.isHost);
+        });
         this.system(`Joined ${this.world} (code ${m.room}). ${this.players.size ? `${this.players.size} other player(s) here.` : this.isPublic ? 'It is listed in the world browser, or share the code.' : 'Private world: share the code so friends can join.'}${this.isHost ? ' You are the host: your clock sets day and night.' : ''}`);
         break;
       }
@@ -357,6 +382,9 @@ export class Net {
         this.onChange?.();
         break;
       }
+      case 'reset':
+        if (!this.isHost) this.onWorldReset?.(String(m.name));
+        break;
       case 'wipe': {
         const lost = this.svc.economy.forfeit(this.svc.economy.cash, `Money wiped by ${m.name}`);
         this.system(`${m.name} wiped everyone's money.`);

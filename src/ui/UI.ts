@@ -33,6 +33,7 @@ export interface UIHost {
   cheatControl(): { online: boolean; isHost: boolean; allowed: boolean; players: number };
   setCheatsAllowed(on: boolean): boolean;
   wipeAllMoney(): string;
+  resetProgress(): string;
 }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] => {
@@ -420,6 +421,34 @@ export class UI {
         wrow.append(wl, wb);
         grid.appendChild(wrow);
       }
+    }
+    // ---- progress reset (two clicks so it can't happen by accident)
+    if (!fromTitle) {
+      grid.appendChild(el('div', 'section-label', 'Progress'));
+      const cc = this.host.cheatControl();
+      const row = el('div', 'setting');
+      const label = cc.online ? (cc.isHost ? 'Reset this world for everyone (money, backpacks, equipment, objectives)' : 'Reset my progress in this world') : 'Reset all progress in this save';
+      const lab = el('label', undefined, label);
+      const btn = el('button', 'btn small danger', 'Reset progress');
+      btn.id = 'btn-reset-progress';
+      let armed = false;
+      btn.addEventListener('click', () => {
+        if (!armed) {
+          armed = true;
+          btn.textContent = 'Click again to reset';
+          setTimeout(() => {
+            armed = false;
+            btn.textContent = 'Reset progress';
+          }, 3000);
+          return;
+        }
+        armed = false;
+        btn.textContent = 'Done';
+        btn.disabled = true;
+        this.toast(this.host.resetProgress(), 'warn');
+      });
+      row.append(lab, btn);
+      grid.appendChild(row);
     }
     grid.appendChild(el('div', 'section-label', 'Audio'));
     slider('set-master', 'Master volume', 0, 1, 0.05, () => st.master, (v) => (st.master = v), pct);

@@ -37,12 +37,21 @@ export class SaveSystem {
   private db: Promise<IDBDatabase | null> = openDb();
 
   async write(slot: number, data: SaveData): Promise<boolean> {
+    return this.writeKey(`slot${slot}`, data);
+  }
+
+  async read(slot: number): Promise<SaveData | null> {
+    return this.readKey(`slot${slot}`);
+  }
+
+  /** Any named save (multiplayer worlds are saved under their own keys, apart from the slots). */
+  async writeKey(key: string, data: SaveData): Promise<boolean> {
     const db = await this.db;
     if (db) {
       return new Promise((resolve) => {
         try {
           const tx = db.transaction(STORE, 'readwrite');
-          tx.objectStore(STORE).put(data, `slot${slot}`);
+          tx.objectStore(STORE).put(data, key);
           tx.oncomplete = () => resolve(true);
           tx.onerror = () => resolve(false);
         } catch {
@@ -51,19 +60,19 @@ export class SaveSystem {
       });
     }
     try {
-      localStorage.setItem(`${DB}.slot${slot}`, JSON.stringify(data));
+      localStorage.setItem(`${DB}.${key}`, JSON.stringify(data));
       return true;
     } catch {
       return false;
     }
   }
 
-  async read(slot: number): Promise<SaveData | null> {
+  async readKey(key: string): Promise<SaveData | null> {
     const db = await this.db;
     if (db) {
       const v = await new Promise<SaveData | null>((resolve) => {
         try {
-          const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(`slot${slot}`);
+          const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(key);
           req.onsuccess = () => resolve((req.result as SaveData) ?? null);
           req.onerror = () => resolve(null);
         } catch {
@@ -73,7 +82,7 @@ export class SaveSystem {
       if (v) return v;
     }
     try {
-      const raw = localStorage.getItem(`${DB}.slot${slot}`);
+      const raw = localStorage.getItem(`${DB}.${key}`);
       return raw ? (JSON.parse(raw) as SaveData) : null;
     } catch {
       return null;

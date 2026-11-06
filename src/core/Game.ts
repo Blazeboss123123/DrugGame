@@ -31,6 +31,7 @@ import type { CheatAction } from '../ui/Panels';
 import { UI, type UIHost } from '../ui/UI';
 import { Vehicles } from '../vehicles/Vehicles';
 import { LightPool } from '../environment/LightPool';
+import { rememberHostedWorld } from '../net/Worlds';
 import { DetailCuller } from '../world/DetailCuller';
 import { STARTER } from '../world/CityGenerator';
 import { Z_LINES, bridgeSpan, riverX } from '../world/CityPlan';
@@ -44,6 +45,9 @@ import { loadSettings, saveSettings } from './Settings';
 import { TimeOfDay } from './TimeOfDay';
 
 type Mode = 'loading' | 'title' | 'playing' | 'paused' | 'modal';
+/** Where a multiplayer world's progress is saved (hosts keep the whole world; guests their own part). */
+const worldKey = (wid: string, role: 'host' | 'guest') => `world-${role}-${wid}`;
+
 /** Real point lights in the pool per graphics level (the rest wait their turn). */
 const LIGHTS = { low: 2, high: 4, ultra: 6 } as const;
 
@@ -197,6 +201,15 @@ export class Game implements UIHost {
     this.customers.attach(this.peds);
     this.viewModel = new ViewModel(this.camera);
     this.newGameState();
+    this.freshSave = this.collectSave();
+    this.net.onWelcome = (info) => this.enterWorld(info);
+    this.net.onLeft = () => void this.leaveWorld();
+    this.net.onWorldReset = (by) =>
+      void this.queueWorld(async () => {
+        this.resetPersonal();
+        await this.saveGame(true);
+        this.ui.toast(`${by} reset the world. Everyone starts over: fresh money and an empty backpack.`, 'warn');
+      });
 
     this.wireEvents();
     this.lights = new LightPool(this.scene, LIGHTS[this.settings.graphics]);
@@ -341,9 +354,15 @@ export class Game implements UIHost {
     const fromTitle = this.mode === 'title';
     this.ui.panels.openMultiplayer(() => {
       if (fromTitle) {
+        // Straight into the world you joined: your progress there was loaded on joining.
         this.fromTitle = false;
-        const latest = [...this.titleSaves].sort((a, b) => b.savedAt - a.savedAt)[0];
-        this.start(latest?.slot);
+        void this.worldOps.then(() => {
+          this.audio.start();
+          this.ui.hideScreen();
+          this.ui.closeModal();
+          this.enterPlay();
+          this.input.requestLock();
+        });
       } else this.ui.dismiss();
     });
   }
@@ -412,7 +431,8 @@ export class Game implements UIHost {
     this.audio.play('ui');
   }
 
-  async saveGame(auto = false): Promise<boolean> {
+  /** Everything that makes up a game: used for slot saves and for each multiplayer world's save. */
+  private collectSave(): SaveData {
     const p = this.player.position;
     const data: SaveData = {
       version: SAVE_VERSION,
@@ -434,15 +454,132 @@ export class Game implements UIHost {
       vehicles: this.vehicles.toJSON(),
       upgrades: this.upgrades.toJSON(),
     };
+    return JSON.parse(JSON.stringify(data)) as SaveData;
+  }
+
+  async saveGame(auto = false): Promise<boolean> {
+    const data = this.collectSave();
+    const w = this.mpWorld;
+    if (w) {
+      // In a multiplayer world: saved to that world only, never over your single-player slots.
+      const ok = await this.saves.writeKey(worldKey(w.wid, w.role), data);
+      if (w.role === 'host') rememberHostedWorld({ wid: w.wid, name: w.name, code: this.net.room, day: this.time.day, cash: this.economy.cash, savedAt: Date.now() });
+      if (!auto) this.ui.toast(ok ? `Saved your progress in ${w.name}.` : 'Saving failed: browser storage is unavailable.', ok ? 'good' : 'warn');
+      return ok;
+    }
     const ok = await this.saves.write(this.slot, data);
     if (!auto) this.ui.toast(ok ? `Saved to slot ${this.slot}.` : 'Saving failed: browser storage is unavailable.', ok ? 'good' : 'warn');
     return ok;
+  }
+
+  // ------------------------------------------------------------------ multiplayer worlds
+  /** The multiplayer world you're in: its own money, backpack, objectives and (as host) everything. */
+  private mpWorld: { wid: string; name: string; role: 'host' | 'guest' } | null = null;
+  /** World switches run one after another (leaving one room and joining the next can overlap). */
+  private worldOps: Promise<void> = Promise.resolve();
+  /** A brand-new game, captured at start-up: what a new world begins from. */
+  private freshSave: SaveData | null = null;
+
+  private queueWorld(fn: () => Promise<void>): Promise<void> {
+    this.worldOps = this.worldOps.then(fn).catch((e) => console.error(e));
+    return this.worldOps;
+  }
+
+  /** Joined (or started hosting) a world: switch to your progress there, or a fresh start. */
+  private enterWorld(info: { wid: string; world: string; host: boolean }): Promise<void> {
+    return this.queueWorld(async () => {
+      // Your single-player game is saved first, so nothing from it is lost or carried over.
+      if (!this.mpWorld && this.mode !== 'title' && this.mode !== 'loading') {
+        const data = this.collectSave();
+        await this.saves.write(this.slot, data);
+      }
+      const role = info.host ? 'host' : 'guest';
+      const saved = await this.saves.readKey(worldKey(info.wid, role));
+      this.applySave(saved ?? this.freshSave!);
+      if (!saved) this.newGameState();
+      this.mpWorld = { wid: info.wid, name: info.world, role };
+      this.ui.hud.renderHotbar();
+      this.ui.toast(
+        saved
+          ? `Welcome back to ${info.world}. Your money, backpack and progress here are just as you left them.`
+          : `New world: you start fresh in ${info.world}. Your single-player save is untouched.`,
+        'good',
+      );
+      if (!saved) await this.saveGame(true);
+    });
+  }
+
+  /**
+   * Reset progress (Settings). Alone: your current save starts over. Guest: your progress in this world.
+   * Host: the whole world starts over for everyone in it.
+   */
+  resetProgress(): string {
+    const w = this.mpWorld;
+    if (this.net.online && this.net.isHost) {
+      void this.queueWorld(async () => {
+        this.applySave(this.freshSave!);
+        this.newGameState();
+        this.net.broadcastReset();
+        await this.saveGame(true);
+      });
+      return `Reset ${w?.name ?? 'this world'} for everyone: fresh money, empty backpacks and a bare house.`;
+    }
+    if (this.net.online) {
+      void this.queueWorld(async () => {
+        this.resetPersonal();
+        await this.saveGame(true);
+      });
+      return `Your progress in ${w?.name ?? 'this world'} is reset. Everyone else's is unchanged.`;
+    }
+    void this.queueWorld(async () => {
+      this.applySave(this.freshSave!);
+      this.newGameState();
+      await this.saveGame(true);
+    });
+    return `Slot ${this.slot} starts over from day one.`;
+  }
+
+  /** Guest reset: your money, backpack, objectives, cars and property, plus your own stashed equipment. */
+  private resetPersonal() {
+    const d = JSON.parse(JSON.stringify(this.freshSave)) as SaveData;
+    this.economy.load(d.economy as ReturnType<Economy['toJSON']>);
+    this.inventory.load(d.inventory as never);
+    this.hotbar.selected = 0;
+    this.state.load(d.state as ReturnType<GameState['toJSON']>);
+    this.vehicles.load(d.vehicles as ReturnType<Vehicles['toJSON']>);
+    this.properties.load(d.properties as ReturnType<Properties['toJSON']>);
+    this.net.sync.resetOwn(d.production, d.customers);
+    this.newGameState();
+    this.ui.hud.renderHotbar();
+  }
+
+  /** Left a world (or lost the connection): save your progress there and go back to your own game. */
+  private leaveWorld(): Promise<void> {
+    return this.queueWorld(async () => {
+      const w = this.mpWorld;
+      if (!w) return;
+      await this.saveGame(true);
+      this.mpWorld = null;
+      const own = await this.saves.read(this.slot);
+      this.applySave(own ?? this.freshSave!);
+      if (!own) this.newGameState();
+      this.ui.hud.renderHotbar();
+      this.ui.toast(`Left ${w.name}. Your progress there is saved for next time, and you're back in your own game.`, 'info');
+    });
   }
 
   async loadGame(slot: number): Promise<boolean> {
     const d = await this.saves.read(slot);
     if (!d) return false;
     this.slot = slot;
+    this.applySave(d);
+    this.ui.toast(`Loaded slot ${slot}: Day ${(d.time as { day: number }).day}.`, 'good');
+    return true;
+  }
+
+  /** Puts a save into every system (replacing whatever was there). */
+  private applySave(src: SaveData) {
+    const d = JSON.parse(JSON.stringify(src)) as SaveData;
     type V = { list: import('../products/Catalog').Variant[]; names: [string, string][] };
     const t = d.time as { day: number; minutes: number };
     this.time.day = t.day;
@@ -469,8 +606,6 @@ export class Game implements UIHost {
     const pl = d.player as { x: number; y: number; z: number; yaw: number };
     this.player.teleport(pl.x, pl.y + 0.1, pl.z, pl.yaw);
     this.ui.hud.renderHotbar();
-    this.ui.toast(`Loaded slot ${slot}: Day ${t.day}.`, 'good');
-    return true;
   }
 
   private enterPlay() {

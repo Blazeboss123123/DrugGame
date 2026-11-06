@@ -4,6 +4,7 @@ import { Container, type Stack } from '../inventory/Inventory';
 import type { Person } from '../npc/Pedestrians';
 import { EFFECTS, FAMILIES, INGREDIENTS, ITEMS, QUALITY_NAMES, VariantRegistry, mixEffects, unitValue, unitsOf, type Quality } from '../products/Catalog';
 import type { DryingRack, Kettle, MixingStation, NeonPress } from '../production/Production';
+import { hostedWorlds } from '../net/Worlds';
 import { iconFor, stackName } from './Icons';
 import { openPackagingBench } from './Packaging';
 import type { UI } from './UI';
@@ -707,7 +708,7 @@ export class Panels {
     me.appendChild(outfitRow);
 
     const out = el('p', 'result');
-    const join = async (code: string, opts: { world?: string; public?: boolean } = {}) => {
+    const join = async (code: string, opts: { world?: string; public?: boolean; wid?: string } = {}) => {
       out.className = 'result';
       out.textContent = `Connecting to ${opts.world ?? code}…`;
       remember({ room: code, world: opts.world ?? saved.world, public: opts.public ?? saved.public });
@@ -777,25 +778,48 @@ export class Panels {
         void load();
         refresh = window.setInterval(() => void load(), 4000);
       } else if (id === 'host') {
-        const world = field(pane, 'mp-world', 'World name', saved.world ?? `${name.value}'s world`, 32);
+        // Every world is its own game: its own money, backpacks, equipment and progress for everyone.
         const pubRow = el('label', 'mp-check');
         const pub = el('input') as HTMLInputElement;
         pub.type = 'checkbox';
         pub.checked = saved.public !== false;
         pubRow.append(pub, el('span', undefined, 'List it publicly so anyone can find and join it'));
-        pane.appendChild(pubRow);
+        const fresh = el('div', 'mp-new');
+        fresh.appendChild(el('div', 'section-label', 'New world'));
+        const world = field(fresh, 'mp-world', 'World name', `${name.value}'s world`, 32);
         const code = Math.random().toString(36).slice(2, 6).toUpperCase();
-        pane.appendChild(el('p', 'muted', `Your friends can also join with the code <strong>${code}</strong>. Everyone plays in your world: your equipment, plants and storage. Each player keeps their own cash and backpack.`));
-        const go = el('button', 'btn primary', 'Start hosting') as HTMLButtonElement;
-        go.onclick = () => void join(code, { world: world.value.trim() || `${name.value}'s world`, public: pub.checked });
-        pane.appendChild(go);
+        fresh.appendChild(pubRow);
+        fresh.appendChild(el('p', 'muted', `Everyone starts from scratch here: new money, empty backpacks, a bare house. Your single-player save isn't touched. Friends can join from the browser or with the code <strong>${code}</strong>.`));
+        const go = el('button', 'btn primary', 'Start a new world') as HTMLButtonElement;
+        go.id = 'mp-host-new';
+        go.onclick = () => void join(code, { world: world.value.trim() || `${name.value}'s world`, public: pub.checked, wid: `w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}` });
+        fresh.appendChild(go);
+        pane.appendChild(fresh);
+        const mine = hostedWorlds();
+        if (mine.length) {
+          const cont = el('div', 'mp-list');
+          pane.appendChild(el('div', 'section-label', 'Carry on with a world you hosted'));
+          for (const w of mine) {
+            const row = el(
+              'div',
+              'mp-world',
+              `<div class="mp-world-main"><strong>${escapeHtml(w.name)}</strong><span class="muted small">Day ${w.day} · your cash there $${w.cash.toLocaleString()} · code ${escapeHtml(w.code)} · last played ${new Date(w.savedAt).toLocaleDateString()}</span></div><div class="mp-world-side"></div>`,
+            );
+            const b = el('button', 'btn', 'Host again') as HTMLButtonElement;
+            b.onclick = () => void join(w.code, { world: w.name, public: pub.checked, wid: w.wid });
+            row.querySelector('.mp-world-side')!.appendChild(b);
+            cont.appendChild(row);
+          }
+          pane.appendChild(cont);
+          pane.appendChild(el('p', 'muted', 'Friends who played there before get their own money and backpack from that world back.'));
+        }
       } else {
         const code = field(pane, 'mp-room', 'World code', saved.room ?? '', 12);
         code.style.textTransform = 'uppercase';
         const go = el('button', 'btn primary', 'Join') as HTMLButtonElement;
-        go.onclick = () => code.value.trim() && void join(code.value.trim().toUpperCase());
+        go.onclick = () => code.value.trim() && void join(code.value.trim().toUpperCase(), { wid: `code-${code.value.trim().toUpperCase()}` });
         code.addEventListener('keydown', (e) => e.key === 'Enter' && go.click());
-        pane.append(go, el('p', 'muted', 'Private worlds don\u2019t show in the browser: ask the host for their code. If nobody is using that code yet, you start a new world with it.'));
+        pane.append(go, el('p', 'muted', 'Private worlds don\u2019t show in the browser: ask the host for their code. If nobody is using that code yet, you start a new world with it. Every world keeps its own money and progress for you.'));
       }
     };
 
@@ -810,7 +834,7 @@ export class Panels {
       const leave = el('button', 'btn small', 'Leave');
       leave.onclick = () => {
         net.disconnect();
-        status.textContent = 'Disconnected. Your own world is back.';
+        status.textContent = 'Left the world. Your progress there is saved, and your own game is back.';
       };
       status.appendChild(leave);
     }

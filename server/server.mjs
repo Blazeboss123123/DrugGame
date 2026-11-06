@@ -170,7 +170,7 @@ const rooms = new Map();
 function roomOf(code) {
   let r = rooms.get(code);
   if (!r) {
-    r = { players: new Map(), host: null, name: '', public: true, createdAt: Date.now(), day: 1, minutes: 0, cheats: true };
+    r = { players: new Map(), host: null, name: '', public: true, createdAt: Date.now(), day: 1, minutes: 0, cheats: true, wid: '' };
     rooms.set(code, r);
   }
   return r;
@@ -214,10 +214,12 @@ server.on('upgrade', (req, sock) => {
           room.public = m.public !== false;
           room.createdAt = Date.now();
           room.cheats = m.cheats !== false;
+          // Each world has its own id, so every player keeps separate progress per world.
+          room.wid = clean(m.wid, 40) || `room:${code}`;
         }
         room.players.set(id, me);
         if (!room.host) room.host = id;
-        ws.send({ t: 'welcome', id, room: code, world: room.name, public: room.public, host: room.host, cheats: room.cheats, day: room.day, minutes: room.minutes, players: [...room.players.values()].filter((p) => p.id !== id).map((p) => ({ id: p.id, name: p.name, outfit: p.outfit })) });
+        ws.send({ t: 'welcome', id, room: code, world: room.name, public: room.public, host: room.host, cheats: room.cheats, wid: room.wid, day: room.day, minutes: room.minutes, players: [...room.players.values()].filter((p) => p.id !== id).map((p) => ({ id: p.id, name: p.name, outfit: p.outfit })) });
         broadcast(room, { t: 'join', id, name: me.name, outfit: me.outfit }, id);
         break;
       case 'st':
@@ -239,6 +241,10 @@ server.on('upgrade', (req, sock) => {
           room.cheats = m.cheats !== false;
           broadcast(room, { t: 'cfg', cheats: room.cheats, name: me.name });
         }
+        break;
+      case 'reset':
+        // Host resets the whole world: everyone in it starts over.
+        if (room.host === id) broadcast(room, { t: 'reset', name: me.name }, id);
         break;
       case 'wipe':
         // "Remove everyone's money": only while cheats are allowed (or from the host).
